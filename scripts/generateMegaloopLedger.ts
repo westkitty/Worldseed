@@ -1,7 +1,9 @@
-// Generator script for docs/MEGALOOP_PASSES.jsonl and docs/MEGALOOP_PROGRESS.md
-
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 interface PassRecord {
   id: string;
