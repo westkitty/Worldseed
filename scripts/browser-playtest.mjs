@@ -14,9 +14,7 @@ page.on('console', msg => {
   if (msg.type() === 'error') runtimeErrors.push(`console: ${msg.text()}`);
 });
 
-const fail = message => {
-  throw new Error(message);
-};
+const fail = message => { throw new Error(message); };
 
 const readYear = async () => {
   const yearLabel = page.getByText('YEAR', { exact: true }).first();
@@ -43,8 +41,7 @@ try {
   if (layerSelectIndex < 0) fail('Map layer selector with TEMPERATURE option was not found.');
   const layerSelect = page.locator('select').nth(layerSelectIndex);
 
-  const root = page.locator('#root');
-  const rootBox = await root.boundingBox();
+  const rootBox = await page.locator('#root').boundingBox();
   if (!rootBox) fail('Application root has no visible bounding box.');
 
   const heroViews = ['GLOBE', 'SNOW_GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW'];
@@ -67,17 +64,30 @@ try {
     await page.mouse.click(cx, cy);
     await page.waitForTimeout(250);
     const inspectorText = await page.locator('body').innerText();
-    if (!/(TILE|SPECIES|SETTLEMENT|RUIN)/.test(inspectorText)) {
-      fail(`${mode} center click did not expose any selectable world entity.`);
-    }
+    if (!/(TILE|SPECIES|SETTLEMENT|RUIN)/.test(inspectorText)) fail(`${mode} center click did not expose any selectable world entity.`);
 
-    // A real layer control must survive in every hero view without runtime failure.
     await layerSelect.selectOption('TEMPERATURE');
     await page.waitForTimeout(150);
     if ((await layerSelect.inputValue()) !== 'TEMPERATURE') fail(`${mode} did not retain the selected map layer.`);
     await layerSelect.selectOption('PHYSICAL');
 
     await page.screenshot({ path: `${outDir}/${mode.toLowerCase()}.png`, fullPage: true });
+  }
+
+  // Keyboard navigation owns WASD/arrows. These keys must move/orbit the world and must
+  // not trigger the old conflicting World Lab / Discoveries shortcuts.
+  await viewSelect.selectOption('GLOBE');
+  await page.keyboard.press('w');
+  await page.keyboard.press('d');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('+');
+  await page.waitForTimeout(150);
+  if (await page.getByText('Planetary & Divine Interventions', { exact: true }).count()) {
+    fail('WASD camera navigation incorrectly opened World Lab.');
+  }
+  if (await page.getByText('Emergent Discoveries', { exact: false }).count()) {
+    const visible = await page.getByText('Emergent Discoveries', { exact: false }).first().isVisible().catch(() => false);
+    if (visible) fail('WASD camera navigation incorrectly opened Discoveries.');
   }
 
   const cycle = ['FLAT_ATLAS', 'GLOBE', 'SNOW_GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW', 'SQUARE_TILE'];
@@ -94,21 +104,15 @@ try {
   await page.screenshot({ path: `${outDir}/immersion.png`, fullPage: true });
   await page.keyboard.press('Tab');
 
-  // Regression gate for the authoritative-engine/UI synchronization bug:
-  // speed must persist and the world must advance repeatedly, not one tick then pause.
   await viewSelect.selectOption('FLAT_ATLAS');
   const beforeYear = await readYear();
   await page.getByRole('button', { name: '20×' }).click();
   await page.getByRole('button', { name: 'Resume Time' }).click();
   await page.waitForTimeout(650);
   const afterYear = await readYear();
-  if (afterYear - beforeYear < 3) {
-    fail(`Continuous simulation stalled: expected multiple years at 20×, advanced only ${afterYear - beforeYear}.`);
-  }
+  if (afterYear - beforeYear < 3) fail(`Continuous simulation stalled: expected multiple years at 20×, advanced only ${afterYear - beforeYear}.`);
   const speedButton = page.getByRole('button', { name: '20×' });
-  if (!(await speedButton.getAttribute('class'))?.includes('bg-sky-600')) {
-    fail('20× speed selection did not remain active after simulation ticks.');
-  }
+  if (!(await speedButton.getAttribute('class'))?.includes('bg-sky-600')) fail('20× speed selection did not remain active after simulation ticks.');
   await page.getByRole('button', { name: 'Pause Time' }).click();
 
   if (runtimeErrors.length) fail(`Browser runtime emitted errors:\n${runtimeErrors.join('\n')}`);
@@ -118,6 +122,7 @@ try {
     checkedAt: new Date().toISOString(),
     heroViews,
     repeatedViewSwitches: cycle.length * 4,
+    keyboardCameraControls: 'PASS',
     continuousSimulationYearsAdvanced: afterYear - beforeYear,
     runtimeErrors,
     verdict: 'PASS'
