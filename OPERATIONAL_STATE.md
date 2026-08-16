@@ -5,36 +5,44 @@
 - **Target Repository**: `https://github.com/westkitty/Worldseed.git`
 - **Current Runtime**: React 19 + TypeScript + Vite + Vitest + Three.js
 - **Launch Command**: `npm run dev`
-- **Current Automated Gate**: `npm run verify:release` = unit/invariant tests + production build only.
-- **Latest verified repair commit before this state correction**: `c449c388a0d5791731c81f3d36bb4d03fa82ae3c`
+- **Automated CI Gate**: unit/invariant tests + TypeScript/Vite production build + real headless Chromium playtest.
+- **Browser evidence**: screenshots and JSON report are uploaded by CI as `worldseed-browser-playtest` artifacts.
 
 ## Protected Core Capabilities
 1. **Deterministic Deep-Time Simulation**: geology, climate, hydrology, biomes, phylogeny, populations, history and causal state.
 2. **Causal History / Curiosity Paths**: WHY?, Chronicle, FOLLOW / WHAT IF? where exposed.
-3. **World Variety**: realistic, fantasy and science-fiction scenarios/presets must remain causally distinct rather than cosmetic labels.
+3. **World Variety**: realistic, fantasy and science-fiction scenarios/presets remain causally distinct rather than cosmetic labels.
 4. **Multi-View World**: 2D Flat Atlas plus Three.js WebGL Globe, Snow Globe, Relief/Diorama and Orbital presentation modes.
-5. **Direct Manipulation**: selection, drag/orbit, wheel zoom, camera focus/navigation, and minimal-invasive world-first UI.
+5. **Direct Manipulation**: selection, drag/orbit, wheel zoom, WASD/arrows, camera focus/navigation, and minimal-invasive world-first UI.
 6. **Local-First Persistence**: IndexedDB save/load and local JSON/recipe export/import; no required cloud runtime.
 
-## Verified Current Evidence
-- GitHub Actions run `31955360220` passed after repair of Three.js scene lifecycle / Snow Globe cleanup.
-- GitHub Actions run `31955383578` passed after restoring 3D surface selection and pointer-centered planar zoom.
-- Current CI proves dependency install, existing Vitest suite, TypeScript/Vite production build.
-- Genuine Three.js `WebGLRenderer`, scene, perspective camera, meshes and materials are present in the repository.
+## Confirmed Repairs During Final Convergence — 2026-08-16
+- Restored actual 3D surface selection in Globe, Snow Globe, Relief/Diorama and Orbital views through Three.js raycasting.
+- Fixed Snow Globe mesh ownership/disposal leak.
+- Fixed relief geometry grid indexing and normalized meter-like elevation into sane Three.js scene units.
+- Fixed pointer-centered planar wheel zoom.
+- Removed browser passive-wheel `preventDefault` errors discovered by the first real Chromium run.
+- Prevented rebuilding Three.js geometry on every simulation tick; live state/layers update textures in place where possible.
+- Added component-unmount WebGL disposal and repeated view-switch browser coverage.
+- Synchronized simulation play/speed controls with the authoritative SimulationEngine state.
+- Added versioned/validated persistence envelopes, backward-compatible legacy import, future-schema rejection, and IndexedDB transaction cleanup.
+- Reassigned WASD/arrows to camera navigation and removed the old W/D modal shortcut conflict; `+/-` zoom and Home resets the flat overview.
+- Added real Chromium coverage for WebGL hero views, orbit/zoom/select, layer switching, repeated view switching, keyboard camera controls, continuous simulation, Immersion Mode, and IndexedDB save → mutate → load.
 
-## Confirmed Defects Repaired 2026-08-16
-- **3D world selection**: previous Globe/Snow Globe/Relief/Orbital click selection path could not select world tiles because hover/selection coordinates existed only in the 2D path. Fixed with Three.js raycasting to the actual selectable world surface and UI wiring.
-- **Snow Globe lifecycle leak**: miniature globe was not tracked/disposed during scene rebuilds. Fixed by explicit mesh ownership/disposal.
-- **Relief mesh indexing**: geometry segment count did not match simulation-grid indexing. Fixed to align vertex grid with world dimensions.
-- **Planar wheel zoom**: previous zoom was centered on the viewport rather than preserving the world coordinate under the pointer. Fixed to pointer-centered zoom.
+## Verified Evidence
+- Existing Vitest simulation suite has passed repeatedly in GitHub Actions, including deterministic/invariant and long-run soak fixtures.
+- TypeScript compilation and Vite production build have passed repeatedly after the renderer/browser repairs.
+- GitHub Actions run `31955849850` was the first complete real-browser green run after fixing the passive wheel error; it passed unit tests, build, preview launch, Chromium interaction and artifact upload.
+- The initial real Chromium run `31955655690` correctly FAILED on passive wheel console errors, proving the browser gate can detect runtime defects instead of self-certifying success.
+- Current final-head convergence run must pass before release status may be promoted further.
 
-## Unverified / Evidence-Stale
-- The historical claims of `24 Reality Rounds`, `6 consecutive green rounds`, and the older generated `4,000 pass` ledger are **not authoritative runtime proof**. Prior megaloop pass records were programmatically generated and must not be used as evidence of actual iteration count.
-- There is currently no repository browser end-to-end test suite proving the full playable journey.
-- `verify:release` does **not** currently prove browser controls, WebGL visual correctness, save/load UI, accessibility, network locality, measured FPS, or repeated 3D resource lifecycle behavior.
-- Human-style visual/playability validation on the current repaired commit remains required on a real browser/device before calling the product fully release-verified.
+## Evidence Not Accepted As Release Proof
+- Historical claims of `24 Reality Rounds`, `6 consecutive green rounds`, and the old generated `4,000 pass` ledger are not authoritative proof. The megaloop records were programmatically generated and remain historical narrative only.
+- A passing build alone is not proof of playability.
+- A generated ledger entry is not proof of a user journey.
 
 ## Current Release Status
-- **Source/build state**: VERIFIED GREEN by GitHub Actions for the two repairs above.
-- **Full playable-product state**: IMPLEMENTED BUT NOT FULLY VERIFIED.
-- **Open release blocker**: browser/end-to-end and visual playtest evidence is missing; do not label WORLDSEED fully release-ready solely from current CI.
+- **Source/build state**: repeatedly green on recent repair commits.
+- **Browser state**: one confirmed full Chromium green exists after the first browser-discovered defect was repaired; newer final-head changes are undergoing fresh convergence runs.
+- **Visual quality note**: current 3D presentation is functional but deliberately stylized/coarse; the earlier Relief/Diorama screenshot exposed excessive vertical scale and that renderer defect has been corrected. Snow Globe/Globe art direction is not equivalent to a bespoke high-detail game-art production.
+- **Promotion rule**: do not call the current head fully release-verified until the final-head Chromium gate completes successfully and repeated reruns remain green without further code changes.
