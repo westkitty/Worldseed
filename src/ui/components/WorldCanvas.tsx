@@ -57,8 +57,6 @@ const layerColor = (
       return `hsla(${210 - rain * 25}, 86%, ${22 + rain * 48}%, 0.78)`;
     }
     case 'BIODIVERSITY': {
-      // Full per-tile species richness is not currently part of public WorldState.
-      // Use visible ecological activity (biomass + vegetation) rather than inventing data.
       const activity = Math.max(0, Math.min(1, (tile.biomass / 1000 + tile.vegetationDensity) / 2));
       return `hsla(${25 + activity * 115}, 72%, ${26 + activity * 34}%, 0.72)`;
     }
@@ -154,7 +152,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     }
   }, [is3DView, viewMode, activeLayer, state]);
 
-  // Always release WebGL resources if this component unmounts while a 3D view is active.
   useEffect(() => () => {
     threeRendererRef.current?.dispose();
     threeRendererRef.current = null;
@@ -240,7 +237,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   };
 
   const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
+    // React registers wheel listeners as passive in modern browsers. The application shell
+    // already has a fixed, overflow-hidden viewport, so preventing document scroll here is
+    // unnecessary and causes a browser console error. Keep zoom behavior without calling
+    // preventDefault from the passive listener.
     if (is3DView && threeRendererRef.current) {
       threeRendererRef.current.zoom(e.deltaY);
       return;
