@@ -18,6 +18,14 @@ const fail = message => {
   throw new Error(message);
 };
 
+const readYear = async () => {
+  const yearLabel = page.getByText('YEAR', { exact: true }).first();
+  const parentText = await yearLabel.locator('..').innerText();
+  const match = parentText.match(/YEAR\s+([\d,]+)/);
+  if (!match) fail(`Could not parse current year from: ${parentText}`);
+  return Number(match[1].replaceAll(',', ''));
+};
+
 try {
   await page.goto(baseURL, { waitUntil: 'networkidle', timeout: 45_000 });
   await page.getByText('WORLDSEED', { exact: true }).first().waitFor({ state: 'visible', timeout: 15_000 });
@@ -28,6 +36,12 @@ try {
   );
   if (viewSelectIndex < 0) fail('World view selector with GLOBE option was not found.');
   const viewSelect = page.locator('select').nth(viewSelectIndex);
+
+  const layerSelectIndex = await page.locator('select').evaluateAll(selects =>
+    selects.findIndex(select => Array.from(select.options).some(option => option.value === 'TEMPERATURE'))
+  );
+  if (layerSelectIndex < 0) fail('Map layer selector with TEMPERATURE option was not found.');
+  const layerSelect = page.locator('select').nth(layerSelectIndex);
 
   const root = page.locator('#root');
   const rootBox = await root.boundingBox();
@@ -41,7 +55,6 @@ try {
     const box = await threeCanvas.boundingBox();
     if (!box || box.width < 400 || box.height < 300) fail(`${mode} WebGL canvas is unexpectedly small or missing.`);
 
-    // Exercise camera input rather than merely checking that a canvas exists.
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
     await page.mouse.move(cx, cy);
@@ -51,8 +64,6 @@ try {
     await page.mouse.wheel(0, -500);
     await page.waitForTimeout(250);
 
-    // Click the visible world surface. A functioning 3D picker should select something
-    // and reveal an inspector with one of the supported entity-type badges.
     await page.mouse.click(cx, cy);
     await page.waitForTimeout(250);
     const inspectorText = await page.locator('body').innerText();
@@ -60,10 +71,15 @@ try {
       fail(`${mode} center click did not expose any selectable world entity.`);
     }
 
+    // A real layer control must survive in every hero view without runtime failure.
+    await layerSelect.selectOption('TEMPERATURE');
+    await page.waitForTimeout(150);
+    if ((await layerSelect.inputValue()) !== 'TEMPERATURE') fail(`${mode} did not retain the selected map layer.`);
+    await layerSelect.selectOption('PHYSICAL');
+
     await page.screenshot({ path: `${outDir}/${mode.toLowerCase()}.png`, fullPage: true });
   }
 
-  // Repeated switching is deliberately hostile to renderer ownership/disposal.
   const cycle = ['FLAT_ATLAS', 'GLOBE', 'SNOW_GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW', 'SQUARE_TILE'];
   for (let round = 0; round < 4; round++) {
     for (const mode of cycle) {
@@ -72,27 +88,37 @@ try {
     }
   }
 
-  // Keyboard controls: view cycling and immersion toggle must not break the app.
   await page.keyboard.press('v');
   await page.keyboard.press('Tab');
   await page.waitForTimeout(200);
   await page.screenshot({ path: `${outDir}/immersion.png`, fullPage: true });
   await page.keyboard.press('Tab');
 
-  // Basic simulation control smoke path.
-  await page.keyboard.press('Space');
-  await page.waitForTimeout(500);
-  await page.keyboard.press('Space');
-
-  if (runtimeErrors.length) {
-    fail(`Browser runtime emitted errors:\n${runtimeErrors.join('\n')}`);
+  // Regression gate for the authoritative-engine/UI synchronization bug:
+  // speed must persist and the world must advance repeatedly, not one tick then pause.
+  await viewSelect.selectOption('FLAT_ATLAS');
+  const beforeYear = await readYear();
+  await page.getByRole('button', { name: '20×' }).click();
+  await page.getByRole('button', { name: 'Resume Time' }).click();
+  await page.waitForTimeout(650);
+  const afterYear = await readYear();
+  if (afterYear - beforeYear < 3) {
+    fail(`Continuous simulation stalled: expected multiple years at 20×, advanced only ${afterYear - beforeYear}.`);
   }
+  const speedButton = page.getByRole('button', { name: '20×' });
+  if (!(await speedButton.getAttribute('class'))?.includes('bg-sky-600')) {
+    fail('20× speed selection did not remain active after simulation ticks.');
+  }
+  await page.getByRole('button', { name: 'Pause Time' }).click();
+
+  if (runtimeErrors.length) fail(`Browser runtime emitted errors:\n${runtimeErrors.join('\n')}`);
 
   const report = {
     baseURL,
     checkedAt: new Date().toISOString(),
     heroViews,
     repeatedViewSwitches: cycle.length * 4,
+    continuousSimulationYearsAdvanced: afterYear - beforeYear,
     runtimeErrors,
     verdict: 'PASS'
   };
