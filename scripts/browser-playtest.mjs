@@ -74,21 +74,15 @@ try {
     await page.screenshot({ path: `${outDir}/${mode.toLowerCase()}.png`, fullPage: true });
   }
 
-  // Keyboard navigation owns WASD/arrows. These keys must move/orbit the world and must
-  // not trigger the old conflicting World Lab / Discoveries shortcuts.
   await viewSelect.selectOption('GLOBE');
   await page.keyboard.press('w');
   await page.keyboard.press('d');
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('+');
   await page.waitForTimeout(150);
-  if (await page.getByText('Planetary & Divine Interventions', { exact: true }).count()) {
-    fail('WASD camera navigation incorrectly opened World Lab.');
-  }
-  if (await page.getByText('Emergent Discoveries', { exact: false }).count()) {
-    const visible = await page.getByText('Emergent Discoveries', { exact: false }).first().isVisible().catch(() => false);
-    if (visible) fail('WASD camera navigation incorrectly opened Discoveries.');
-  }
+  if (await page.getByText('Planetary & Divine Interventions', { exact: true }).count()) fail('WASD camera navigation incorrectly opened World Lab.');
+  const discoveryHeading = page.getByText('Emergent Discoveries', { exact: false }).first();
+  if (await discoveryHeading.count() && await discoveryHeading.isVisible().catch(() => false)) fail('WASD camera navigation incorrectly opened Discoveries.');
 
   const cycle = ['FLAT_ATLAS', 'GLOBE', 'SNOW_GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW', 'SQUARE_TILE'];
   for (let round = 0; round < 4; round++) {
@@ -115,6 +109,25 @@ try {
   if (!(await speedButton.getAttribute('class'))?.includes('bg-sky-600')) fail('20× speed selection did not remain active after simulation ticks.');
   await page.getByRole('button', { name: 'Pause Time' }).click();
 
+  // Real IndexedDB/UI persistence round trip: save, mutate time, load the save, and prove
+  // the authoritative engine state returns to the saved year.
+  const savedYear = await readYear();
+  await page.getByTitle('Local Saves & World Export/Import').click();
+  await page.getByPlaceholder('Enter save slot name...').fill('Browser E2E Checkpoint');
+  await page.getByRole('button', { name: 'Save to Browser DB' }).click();
+  await page.getByText('Browser E2E Checkpoint', { exact: true }).waitFor({ state: 'visible', timeout: 5_000 });
+  await page.getByLabel('Close Saves').click();
+
+  await page.getByText('+10y', { exact: true }).click();
+  const mutatedYear = await readYear();
+  if (mutatedYear <= savedYear) fail('World did not advance after creating the persistence checkpoint.');
+
+  await page.getByTitle('Local Saves & World Export/Import').click();
+  await page.getByRole('button', { name: 'Load' }).first().click();
+  await page.waitForTimeout(200);
+  const restoredYear = await readYear();
+  if (restoredYear !== savedYear) fail(`Save/load round trip restored year ${restoredYear}, expected ${savedYear}.`);
+
   if (runtimeErrors.length) fail(`Browser runtime emitted errors:\n${runtimeErrors.join('\n')}`);
 
   const report = {
@@ -124,6 +137,7 @@ try {
     repeatedViewSwitches: cycle.length * 4,
     keyboardCameraControls: 'PASS',
     continuousSimulationYearsAdvanced: afterYear - beforeYear,
+    persistenceRoundTrip: { savedYear, mutatedYear, restoredYear, verdict: 'PASS' },
     runtimeErrors,
     verdict: 'PASS'
   };
