@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify:release": "npm test && npm run build"
   },
   "dependencies": {
     "lucide-react": "^1.16.0",
