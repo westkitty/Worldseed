@@ -166,10 +166,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
+    const baseOriginX = (canvas.width - width * tileSize) / 2;
+    const baseOriginY = (canvas.height - height * tileSize) / 2;
     setCamera(prev => ({
       ...prev,
-      x: canvas.width / 2 - (tileX + 0.5) * tileSize,
-      y: canvas.height / 2 - (tileY + 0.5) * tileSize
+      x: canvas.width / 2 - (tileX + 0.5) * tileSize - baseOriginX,
+      y: canvas.height / 2 - (tileY + 0.5) * tileSize - baseOriginY
     }));
   };
 
