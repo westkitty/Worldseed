@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "WORLDSEED Visual Asset Manifest",
+  "version": "1.0.0",
+  "lastUpdated": "2026-08-16T10:40:00Z",
+  "assets": [
+    {
+      "id": "asset-proc-biome-tileset-v1",
+      "path": "src/visuals/sprites/biomeTileset.ts",
+      "creator": "WORLDSEED Procedural Graphics Engine",
+      "license": "CC0-1.0",
+      "provenance": "Original Procedural Canvas Pixel Generator",
+      "type": "PROCEDURAL_TILESET",
+      "dimensions": "32x32 per tile",
+      "usage": "Terrain & Biome rendering across all 15 Whittaker zones"
+    },
+    {
+      "id": "asset-proc-fauna-flora-v1",
+      "path": "src/visuals/sprites/organismSprites.ts",
+      "creator": "WORLDSEED Procedural Graphics Engine",
+      "license": "CC0-1.0",
+      "provenance": "Original Procedural Vector Sprite Generator",
+      "type": "PROCEDURAL_SPRITES",
+      "dimensions": "24x24 per entity",
+      "usage": "Species representations in Inspector and World Canvas"
+    },
+    {
+      "id": "asset-proc-civ-infrastructure-v1",
+      "path": "src/visuals/sprites/civilizationSprites.ts",
+      "creator": "WORLDSEED Procedural Graphics Engine",
+      "license": "CC0-1.0",
+      "provenance": "Original Procedural Architectural Generator",
+      "type": "PROCEDURAL_SPRITES",
+      "dimensions": "32x32 per settlement/ruin",
+      "usage": "Settlement tiers, monuments, ruins, and transport vessels"
+    }
+  ]
+}
