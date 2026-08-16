@@ -72,16 +72,44 @@ jobs:
     - name: Build and verify native macOS app
       run: npm run build:mac
 
-    - name: Smoke launch native app process
+    - name: Verify native WebKit renders WORLDSEED
       run: |
         APP="build/macos/WORLDSEED.app"
         LOG="$(mktemp)"
-        "$APP/Contents/MacOS/WORLDSEED" >"$LOG" 2>&1 &
+        RESULT="$(mktemp)"
+        rm -f "$RESULT"
+
+        WORLDSEED_NATIVE_SMOKE_FILE="$RESULT" "$APP/Contents/MacOS/WORLDSEED" >"$LOG" 2>&1 &
         PID=$!
-        sleep 5
-        if ! kill -0 "$PID" 2>/dev/null; then
+
+        for i in {1..150}; do
+          if [ -s "$RESULT" ]; then
+            break
+          fi
+          if ! kill -0 "$PID" 2>/dev/null; then
+            echo "WORLDSEED exited before reporting native render readiness."
+            cat "$LOG"
+            exit 1
+          fi
+          sleep 0.1
+        done
+
+        if [ ! -s "$RESULT" ]; then
+          echo "WORLDSEED did not report native render readiness within 15 seconds."
           cat "$LOG"
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" || true
           exit 1
         fi
-        kill "$PID"
+
+        STATUS="$(cat "$RESULT")"
+        cat "$LOG"
+        echo "Native render status: $STATUS"
+
+        if [ "$STATUS" != "PASS" ]; then
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" || true
+          exit 1
+        fi
+
         wait "$PID" || true
