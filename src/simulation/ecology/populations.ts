@@ -9,10 +9,83 @@ export interface TilePop {
   adaptation: number; // 0 to 1
 }
 
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function resolveMigrationTarget(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  config: WorldConfig
+): { x: number; y: number } | null {
+  const { width, height } = config;
+  const topology = config.topology || 'SPHERICAL';
+
+  if (topology === 'TOROIDAL_WRAP') {
+    return {
+      x: (x + dx + width) % width,
+      y: (y + dy + height) % height
+    };
+  }
+
+  if (topology === 'SPHERICAL' || topology === 'CYLINDRICAL_HABITAT' || topology === 'RINGWORLD_SEGMENT') {
+    return {
+      x: (x + dx + width) % width,
+      y: Math.max(0, Math.min(height - 1, y + dy))
+    };
+  }
+
+  // Bounded, floating-island, and layered-cavern worlds do not silently wrap
+  // populations across opposite edges of the simulation.
+  const nx = x + dx;
+  const ny = y + dy;
+  if (nx < 0 || nx >= width || ny < 0 || ny >= height) return null;
+  return { x: nx, y: ny };
+}
+
+function updateGenreEnvironment(tile: Tile, config: WorldConfig): number {
+  const genre = config.genre || 'REALISTIC';
+  let fitnessMultiplier = 1;
+
+  if (genre === 'FANTASY' || genre === 'SCIENCE_FANTASY') {
+    const mineralResonance =
+      (tile.minerals.GEMS || 0) * 0.55 +
+      (tile.minerals.OBSIDIAN || 0) * 0.25 +
+      config.volcanism * 0.2;
+    const mana = clamp01(mineralResonance * (config.manaRichness || 0));
+    tile.manaDensity = mana;
+    tile.isEnchanted = mana > 0.62;
+    // Magic is now causal rather than cosmetic: organisms in mana-rich niches
+    // receive a bounded environmental advantage and therefore alter migration,
+    // selection and downstream civilization history.
+    fitnessMultiplier *= 1 + mana * 0.24;
+  } else {
+    tile.manaDensity = 0;
+    tile.isEnchanted = false;
+  }
+
+  if (genre === 'SCI_FI' || genre === 'SCIENCE_FANTASY') {
+    const cyber = clamp01(config.cyberTechLevel || 0);
+    const machineSubstrate = clamp01(
+      ((tile.minerals.RARE_EARTHS || 0) * 0.65 + (tile.minerals.IRON || 0) * 0.2 + (tile.minerals.COPPER || 0) * 0.15) * cyber
+    );
+    tile.techArtifacts = machineSubstrate;
+    // Automated habitat support/terraforming is deliberately modest; it changes
+    // ecological outcomes without replacing ordinary food-web pressure.
+    fitnessMultiplier *= 1 + machineSubstrate * 0.16;
+  } else {
+    tile.techArtifacts = 0;
+  }
+
+  return fitnessMultiplier;
+}
+
 export function simulateEcologicalCycle(
   grid: Tile[][],
   speciesMap: Record<string, Species>,
-  tilePops: Map<string, TilePop[]>, // key: `${x},${y}`
+  tilePops: Map<string, TilePop[]>,
   config: WorldConfig,
   prng: PRNG,
   year: number
@@ -33,15 +106,14 @@ export function simulateEcologicalCycle(
     }
   }
 
-  // Iterate over each tile on the map
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const tile = grid[y][x];
       const key = `${x},${y}`;
       const pops = tilePops.get(key) || [];
       const updatedPopsForTile: TilePop[] = [];
+      const genreFitnessMultiplier = updateGenreEnvironment(tile, config);
 
-      // Calculate total plant biomass available in this tile
       let availablePlantBiomass = tile.biomass;
       let totalHerbivoresCount = 0;
       let totalPredatorsCount = 0;
@@ -53,55 +125,49 @@ export function simulateEcologicalCycle(
         if (s.trophicLevel === 'SECONDARY_CONSUMER' || s.trophicLevel === 'APEX_PREDATOR') totalPredatorsCount += p.count;
       }
 
-      // Process each species population cluster in this tile
       for (const p of pops) {
         const s = speciesMap[p.speciesId];
         if (!s || s.isExtinct) continue;
 
-        // 1. Environmental Suitability Check
         const tempDiff = Math.abs(tile.currentTemp - s.genome.preferredTemp);
         const tempSuitability = Math.max(0, 1.0 - tempDiff / (s.genome.tempTolerance + 0.1));
 
-        // Aquatic vs Terrestrial check
-        const aquaticSuitability = (tile.isWater && (s.morphology === 'AUTOTROPH_ALGAE' || s.morphology === 'PISCINE' || s.morphology === 'INVERTEBRATE_MOLLUSK')) ||
-                                  (!tile.isWater && (s.morphology !== 'AUTOTROPH_ALGAE' && s.morphology !== 'PISCINE')) ? 1.0 : 0.05;
+        const aquaticSuitability =
+          (tile.isWater && (s.morphology === 'AUTOTROPH_ALGAE' || s.morphology === 'PISCINE' || s.morphology === 'INVERTEBRATE_MOLLUSK')) ||
+          (!tile.isWater && s.morphology !== 'AUTOTROPH_ALGAE' && s.morphology !== 'PISCINE')
+            ? 1.0
+            : 0.05;
 
         const moistureDiff = Math.abs(tile.moisture - 0.5);
         const moistureSuitability = Math.max(0.1, 1.0 - moistureDiff * (1.0 - s.genome.moistureTolerance));
 
-        const overallFitness = Math.max(0.01, tempSuitability * aquaticSuitability * moistureSuitability);
+        const overallFitness = Math.max(
+          0.01,
+          tempSuitability * aquaticSuitability * moistureSuitability * genreFitnessMultiplier
+        );
 
-        // 2. Trophic Dynamics (Births, Starvation, Predation)
         let growthRate = 0;
         let deathRate = 0;
 
         if (s.trophicLevel === 'PRODUCER') {
-          // Producers grow based on sunlight, soil fertility, freshwater
           growthRate = s.genome.fertility * 0.4 * overallFitness * (tile.soilFertility + 0.2);
-          // Grazing pressure from herbivores
           deathRate = 0.05 + (totalHerbivoresCount / (tile.carryingCapacity + 100)) * 0.3;
         } else if (s.trophicLevel === 'PRIMARY_CONSUMER') {
-          // Herbivores feed on plant biomass
           const foodAvailable = Math.min(1.0, availablePlantBiomass / (totalHerbivoresCount * s.genome.bodySizeMeters + 10));
           growthRate = s.genome.fertility * 0.35 * overallFitness * foodAvailable;
-          // Predation loss
           deathRate = 0.08 + (totalPredatorsCount / (totalHerbivoresCount + 50)) * 0.4;
         } else if (s.trophicLevel === 'SECONDARY_CONSUMER' || s.trophicLevel === 'APEX_PREDATOR') {
-          // Carnivores feed on herbivores
           const preyAvailable = Math.min(1.0, (totalHerbivoresCount * 2.0) / (totalPredatorsCount + 10));
           growthRate = s.genome.fertility * 0.25 * overallFitness * preyAvailable;
           deathRate = 0.12 + (1.0 - preyAvailable) * 0.5;
         } else {
-          // Decomposers / Scavengers
           growthRate = s.genome.fertility * 0.3 * overallFitness;
           deathRate = 0.1;
         }
 
-        // Apply population change with logistic capacity damper
         const capacityFactor = Math.max(0.1, 1.0 - p.count / (tile.carryingCapacity + 100));
         let newCount = p.count + p.count * (growthRate * capacityFactor - deathRate);
 
-        // Random demographic drift
         newCount += prng.gaussian(0, Math.sqrt(Math.max(1, p.count)) * 0.2);
         newCount = Math.round(newCount);
 
@@ -113,47 +179,36 @@ export function simulateEcologicalCycle(
           });
           speciesTotals[p.speciesId] = (speciesTotals[p.speciesId] || 0) + newCount;
 
-          // 3. Migration Pressure: If population is healthy, spread to adjacent tiles
           if (newCount > 150 && s.genome.mobility > 0.2 && prng.next() < s.genome.migrationTendency * 0.4) {
             const dx = prng.choice([-1, 0, 1]);
             const dy = prng.choice([-1, 0, 1]);
             if (dx !== 0 || dy !== 0) {
-              const nx = (x + dx + width) % width;
-              const ny = Math.max(0, Math.min(height - 1, y + dy));
-              const neighborKey = `${nx},${ny}`;
-              const migrantCount = Math.round(newCount * 0.1);
-
-              let nPops = newTilePops.get(neighborKey);
-              if (!nPops) {
-                nPops = [];
-                newTilePops.set(neighborKey, nPops);
-              }
-              const existing = nPops.find(ep => ep.speciesId === p.speciesId);
-              if (existing) {
-                existing.count += migrantCount;
-              } else {
-                nPops.push({ speciesId: p.speciesId, count: migrantCount, adaptation: 0.5 });
+              const target = resolveMigrationTarget(x, y, dx, dy, config);
+              if (target) {
+                const neighborKey = `${target.x},${target.y}`;
+                const migrantCount = Math.round(newCount * 0.1);
+                let nPops = newTilePops.get(neighborKey);
+                if (!nPops) {
+                  nPops = [];
+                  newTilePops.set(neighborKey, nPops);
+                }
+                const existing = nPops.find(ep => ep.speciesId === p.speciesId);
+                if (existing) existing.count += migrantCount;
+                else nPops.push({ speciesId: p.speciesId, count: migrantCount, adaptation: 0.5 });
               }
             }
           }
         }
       }
 
-      // Merge newly added migrants with updated pops
-      let existingMerged = newTilePops.get(key) || [];
+      const existingMerged = newTilePops.get(key) || [];
       for (const up of updatedPopsForTile) {
         const found = existingMerged.find(e => e.speciesId === up.speciesId);
-        if (found) {
-          found.count += up.count;
-        } else {
-          existingMerged.push(up);
-        }
+        if (found) found.count += up.count;
+        else existingMerged.push(up);
       }
-      if (existingMerged.length > 0) {
-        newTilePops.set(key, existingMerged);
-      }
+      if (existingMerged.length > 0) newTilePops.set(key, existingMerged);
 
-      // Update tile population density summary & dominant species
       let tileTotalPop = 0;
       let dominantSId: string | undefined;
       let maxCount = 0;
@@ -169,12 +224,9 @@ export function simulateEcologicalCycle(
     }
   }
 
-  // Identify species that have died out everywhere
   const extinctionCandidates: string[] = [];
   for (const sId of activeSpeciesIds) {
-    if ((speciesTotals[sId] || 0) <= 0) {
-      extinctionCandidates.push(sId);
-    }
+    if ((speciesTotals[sId] || 0) <= 0) extinctionCandidates.push(sId);
   }
 
   return { updatedTilePops: newTilePops, speciesTotals, extinctionCandidates };
