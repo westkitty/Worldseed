@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:mac:web": "tsc && vite build --base=./",
+    "build:mac": "bash scripts/build-macos-app.sh",
     "preview": "vite preview",
     "test": "vitest run",
-    "verify:release": "npm test && npm run build"
+    "verify:release": "npm test && npm run build",
+    "verify:mac": "bash scripts/verify-macos-app.sh",
+    "mac": "bash scripts/launch-macos-app.sh"
   },
   "dependencies": {
     "@types/three": "^0.185.4",
