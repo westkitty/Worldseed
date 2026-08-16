@@ -36,6 +36,87 @@ interface WorldCanvasProps {
   onOpenWhy: (nodeId: string) => void;
 }
 
+const hashHue = (value: string): number => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+  return Math.abs(hash) % 360;
+};
+
+const layerColor = (
+  state: WorldState,
+  tile: WorldState['grid'][number][number],
+  layer: MapLayerMode
+): string => {
+  switch (layer) {
+    case 'TEMPERATURE': {
+      const t = Math.max(0, Math.min(1, (tile.currentTemp + 35) / 85));
+      return `hsla(${220 - t * 220}, 82%, 52%, 0.78)`;
+    }
+    case 'RAINFALL': {
+      const rain = Math.max(0, Math.min(1, tile.rainfall));
+      return `hsla(${210 - rain * 25}, 86%, ${22 + rain * 48}%, 0.78)`;
+    }
+    case 'BIODIVERSITY': {
+      // Full per-tile species richness is not currently part of public WorldState.
+      // Use visible ecological activity (biomass + vegetation) rather than inventing data.
+      const activity = Math.max(0, Math.min(1, (tile.biomass / 1000 + tile.vegetationDensity) / 2));
+      return `hsla(${25 + activity * 115}, 72%, ${26 + activity * 34}%, 0.72)`;
+    }
+    case 'POLITICAL':
+      return tile.polityId ? `hsla(${hashHue(tile.polityId)}, 68%, 50%, 0.78)` : 'rgba(15, 23, 42, 0.45)';
+    case 'SETTLEMENTS':
+      if (tile.settlementId) return 'rgba(245, 158, 11, 0.82)';
+      if (tile.infrastructureLevel > 0) return 'rgba(161, 98, 7, 0.62)';
+      return 'rgba(15, 23, 42, 0.36)';
+    case 'CULTURES': {
+      if (!tile.dominantCultureId) return 'rgba(15, 23, 42, 0.4)';
+      const culture = state.cultures[tile.dominantCultureId];
+      return culture?.colorHex ? `${culture.colorHex}cc` : `hsla(${hashHue(tile.dominantCultureId)}, 62%, 50%, 0.78)`;
+    }
+    case 'LANGUAGES': {
+      const languageId = tile.dominantCultureId ? state.cultures[tile.dominantCultureId]?.languageId : undefined;
+      return languageId ? `hsla(${hashHue(languageId)}, 68%, 52%, 0.78)` : 'rgba(15, 23, 42, 0.4)';
+    }
+    case 'DISEASES':
+      return tile.activeContagionIds.length > 0 ? 'rgba(239, 68, 68, 0.86)' : 'rgba(15, 23, 42, 0.38)';
+    case 'RUINS_ARCHAEOLOGY':
+      return tile.ruins.length > 0 || tile.fossils.length > 0 ? 'rgba(168, 85, 247, 0.84)' : 'rgba(28, 25, 23, 0.38)';
+    case 'ENVIRONMENTAL_SCARS': {
+      const damage = Math.max(0, Math.min(1, Math.max(tile.environmentalDamage, tile.pollution, tile.erosionLevel)));
+      return damage > 0.05 ? `hsla(${42 - damage * 42}, 82%, ${48 - damage * 18}%, 0.78)` : 'rgba(15, 23, 42, 0.18)';
+    }
+    default:
+      return 'rgba(0,0,0,0)';
+  }
+};
+
+const drawLayerOverlay = (
+  ctx: CanvasRenderingContext2D,
+  state: WorldState,
+  layer: MapLayerMode,
+  camera: Camera3D,
+  canvasWidth: number,
+  canvasHeight: number
+) => {
+  if (layer === 'PHYSICAL' || layer === 'BIOMES') return;
+  const { width, height } = state.config;
+  const tileSize = (Math.min(canvasWidth, canvasHeight) / height) * camera.zoom;
+  const originX = (canvasWidth - width * tileSize) / 2 + camera.x;
+  const originY = (canvasHeight - height * tileSize) / 2 + camera.y;
+
+  ctx.save();
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const px = originX + x * tileSize;
+      const py = originY + y * tileSize;
+      if (px + tileSize < 0 || px > canvasWidth || py + tileSize < 0 || py > canvasHeight) continue;
+      ctx.fillStyle = layerColor(state, state.grid[y][x], layer);
+      ctx.fillRect(px, py, tileSize + 0.5, tileSize + 0.5);
+    }
+  }
+  ctx.restore();
+};
+
 export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   state,
   activeLayer,
@@ -66,33 +147,33 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   useEffect(() => {
     if (is3DView && threeContainerRef.current) {
       if (!threeRendererRef.current) threeRendererRef.current = new ThreeWorldRenderer(threeContainerRef.current);
-      threeRendererRef.current.updateScene(state, viewMode);
+      threeRendererRef.current.updateScene(state, viewMode, activeLayer);
     } else if (threeRendererRef.current) {
       threeRendererRef.current.dispose();
       threeRendererRef.current = null;
     }
+  }, [is3DView, viewMode, activeLayer, state]);
 
-    return () => {
-      if (!is3DView && threeRendererRef.current) {
-        threeRendererRef.current.dispose();
-        threeRendererRef.current = null;
-      }
-    };
-  }, [is3DView, viewMode, state]);
+  // Always release WebGL resources if this component unmounts while a 3D view is active.
+  useEffect(() => () => {
+    threeRendererRef.current?.dispose();
+    threeRendererRef.current = null;
+  }, []);
 
   const handleCenterCoordinates = (tileX: number, tileY: number) => {
-    const canvas = canvasRef.current;
     if (is3DView && threeRendererRef.current) {
-      const u = tileX / width;
-      threeRendererRef.current.rotY = -(u - 0.5) * (Math.PI * 2) - Math.PI / 2;
+      threeRendererRef.current.focusTile(tileX, tileY, width, height);
       return;
     }
-    if (!canvas) return;
 
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
-    const targetX = canvas.width / 2 - (tileX + 0.5) * tileSize;
-    const targetY = canvas.height / 2 - (tileY + 0.5) * tileSize;
-    setCamera(prev => ({ ...prev, x: targetX, y: targetY }));
+    setCamera(prev => ({
+      ...prev,
+      x: canvas.width / 2 - (tileX + 0.5) * tileSize,
+      y: canvas.height / 2 - (tileY + 0.5) * tileSize
+    }));
   };
 
   const selectTileAt = (coords: { x: number; y: number } | null) => {
@@ -118,22 +199,19 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     if (isDragging) {
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) setDragThresholdPassed(true);
-
-      if (is3DView && threeRendererRef.current) {
-        threeRendererRef.current.rotate(dx, dy);
-      } else {
-        setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
-      }
+      if (is3DView && threeRendererRef.current) threeRendererRef.current.rotate(dx, dy);
+      else setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
       setDragStart({ x: e.clientX, y: e.clientY });
+      return;
     }
 
-    if (!is3DView && canvasRef.current) {
+    if (is3DView && threeRendererRef.current) {
+      setHoveredTile(threeRendererRef.current.pickTile(e.clientX, e.clientY, state));
+    } else if (canvasRef.current) {
       const rect = canvasRef.current.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
       setHoveredTile(WorldProjectionEngine.screenToGrid(
-        mouseX,
-        mouseY,
+        e.clientX - rect.left,
+        e.clientY - rect.top,
         canvasRef.current.width,
         canvasRef.current.height,
         camera,
@@ -146,11 +224,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
   const handleMouseUp = (e: React.MouseEvent) => {
     if (!dragThresholdPassed) {
-      if (is3DView && threeRendererRef.current) {
-        selectTileAt(threeRendererRef.current.pickTile(e.clientX, e.clientY, state));
-      } else {
-        selectTileAt(hoveredTile);
-      }
+      const coords = is3DView && threeRendererRef.current
+        ? threeRendererRef.current.pickTile(e.clientX, e.clientY, state)
+        : hoveredTile;
+      selectTileAt(coords);
     }
     setIsDragging(false);
     setDragThresholdPassed(false);
@@ -159,7 +236,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   const handleMouseLeave = () => {
     setIsDragging(false);
     setDragThresholdPassed(false);
-    if (!is3DView) setHoveredTile(null);
+    setHoveredTile(null);
   };
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -183,12 +260,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       const oldOriginY = (canvas.height - height * oldTileSize) / 2 + prev.y;
       const worldX = (mouseX - oldOriginX) / oldTileSize;
       const worldY = (mouseY - oldOriginY) / oldTileSize;
-
       const nextZoom = Math.max(0.4, Math.min(10.0, prev.zoom * zoomFactor));
       const newTileSize = baseTileSize * nextZoom;
       const baseOriginX = (canvas.width - width * newTileSize) / 2;
       const baseOriginY = (canvas.height - height * newTileSize) / 2;
-
       return {
         ...prev,
         zoom: nextZoom,
@@ -210,13 +285,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const render = () => {
       time += 0.02;
       WorldViewRenderer.renderView(ctx, canvas.width, canvas.height, state, viewMode, camera, hoveredTile, time);
+      drawLayerOverlay(ctx, state, activeLayer, camera, canvas.width, canvas.height);
 
       const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
       const originX = (canvas.width - width * tileSize) / 2 + camera.x;
       const originY = (canvas.height - height * tileSize) / 2 + camera.y;
       particleEngineRef.current.update(width, height, time);
       particleEngineRef.current.render(ctx, originX, originY, tileSize, canvas.width, canvas.height);
-
       animFrameId = requestAnimationFrame(render);
     };
 
@@ -230,7 +305,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       if (!parent) return;
       const w = parent.clientWidth || 800;
       const h = parent.clientHeight || 600;
-
       if (canvasRef.current) {
         canvasRef.current.width = w;
         canvasRef.current.height = h;
@@ -279,8 +353,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             <div>Temp: <span className="text-white">{currentHoveredTileData.currentTemp}°C</span></div>
             <div>Rain: <span className="text-white">{Math.round(currentHoveredTileData.rainfall * 100)}%</span></div>
             <div>Moist: <span className="text-white">{Math.round(currentHoveredTileData.moisture * 100)}%</span></div>
-            <div>Biomass: <span className="text-emerald-400">{currentHoveredTileData.biomass}</span></div>
-            <div>Pop: <span className="text-amber-400">{currentHoveredTileData.populationDensity}</span></div>
+            <div>Biomass: <span className="text-emerald-400">{Math.round(currentHoveredTileData.biomass)}</span></div>
+            <div>Pop: <span className="text-amber-400">{Math.round(currentHoveredTileData.populationDensity)}</span></div>
           </div>
           {currentHoveredTileData.settlementId && state.settlements[currentHoveredTileData.settlementId] && (
             <div className="mt-2 pt-1 border-t border-slate-700 font-sans text-amber-300 font-medium">
