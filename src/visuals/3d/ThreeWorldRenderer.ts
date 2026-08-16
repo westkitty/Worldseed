@@ -39,11 +39,7 @@ export class ThreeWorldRenderer {
     const width = this.container.clientWidth || 800;
     const height = this.container.clientHeight || 600;
 
-    this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true,
-      powerPreference: 'high-performance'
-    });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.domElement.dataset.worldseedRenderer = 'three';
@@ -54,7 +50,6 @@ export class ThreeWorldRenderer {
 
     this.scene = new THREE.Scene();
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-
     const dirLight = new THREE.DirectionalLight(0xfffaed, 1.2);
     dirLight.position.set(60, 40, 50);
     this.scene.add(dirLight);
@@ -109,8 +104,6 @@ export class ThreeWorldRenderer {
         return `hsl(${210 - r * 25} 86% ${22 + r * 48}%)`;
       }
       case 'BIODIVERSITY': {
-        // The tile model currently exposes ecological biomass/dominance rather than full
-        // per-tile richness. Render ecological activity honestly as a bounded proxy.
         const activity = THREE.MathUtils.clamp((tile.biomass / 1000 + tile.vegetationDensity) / 2, 0, 1);
         return `hsl(${25 + activity * 115} 72% ${26 + activity * 34}%)`;
       }
@@ -132,8 +125,6 @@ export class ThreeWorldRenderer {
         const damage = THREE.MathUtils.clamp(Math.max(tile.environmentalDamage, tile.pollution, tile.erosionLevel), 0, 1);
         return damage > 0.05 ? `hsl(${42 - damage * 42} 82% ${48 - damage * 18}%)` : this.biomeColor(tile.biome);
       }
-      case 'PHYSICAL':
-      case 'BIOMES':
       default:
         return this.biomeColor(tile.biome);
     }
@@ -183,16 +174,11 @@ export class ThreeWorldRenderer {
     oldTexture?.dispose();
   }
 
-  // Frequent simulation updates refresh material data in place. Geometry is rebuilt only
-  // when the presentation mode or grid dimensions change.
   public updateScene(state: WorldState, viewMode: WorldViewMode, layer = 'PHYSICAL') {
     if (!this.scene) return;
 
     const dimensions = `${state.config.width}x${state.config.height}`;
-    const needsRebuild =
-      this.currentViewMode !== viewMode ||
-      this.currentDimensions !== dimensions ||
-      (!this.surfaceMesh && !this.reliefMesh);
+    const needsRebuild = this.currentViewMode !== viewMode || this.currentDimensions !== dimensions || (!this.surfaceMesh && !this.reliefMesh);
 
     if (!needsRebuild) {
       this.replaceWorldTexture(state, layer);
@@ -208,53 +194,27 @@ export class ThreeWorldRenderer {
 
     if (viewMode === 'GLOBE' || viewMode === 'ORBITAL_VIEW') {
       const radius = 18;
-      this.surfaceMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(radius, 48, 48),
-        new THREE.MeshStandardMaterial({ map: this.worldTexture, roughness: 0.7, metalness: 0.1 })
-      );
+      this.surfaceMesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 48), new THREE.MeshStandardMaterial({ map: this.worldTexture, roughness: 0.7, metalness: 0.1 }));
       this.scene.add(this.surfaceMesh);
 
-      this.cloudMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(radius * 1.025, 32, 32),
-        new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.2, depthWrite: false, roughness: 0.9 })
-      );
+      this.cloudMesh = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.025, 32, 32), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.2, depthWrite: false, roughness: 0.9 }));
       this.scene.add(this.cloudMesh);
 
       if (viewMode === 'ORBITAL_VIEW') {
-        this.moonMesh = new THREE.Mesh(
-          new THREE.SphereGeometry(3.5, 24, 24),
-          new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.8 })
-        );
+        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(3.5, 24, 24), new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.8 }));
         this.moonMesh.position.set(38, 12, -15);
         this.scene.add(this.moonMesh);
       }
     } else if (viewMode === 'SNOW_GLOBE') {
       const radius = 14;
-      this.baseMesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(radius * 1.2, radius * 1.4, 5, 32),
-        new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.5 })
-      );
+      this.baseMesh = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.2, radius * 1.4, 5, 32), new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.5 }));
       this.baseMesh.position.set(0, -radius - 2, 0);
       this.scene.add(this.baseMesh);
 
-      this.surfaceMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(radius, 40, 40),
-        new THREE.MeshStandardMaterial({ map: this.worldTexture, roughness: 0.8 })
-      );
+      this.surfaceMesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 40, 40), new THREE.MeshStandardMaterial({ map: this.worldTexture, roughness: 0.8 }));
       this.scene.add(this.surfaceMesh);
 
-      this.glassDomeMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(radius * 1.35, 40, 40),
-        new THREE.MeshPhysicalMaterial({
-          color: 0xffffff,
-          transparent: true,
-          opacity: 0.22,
-          roughness: 0.05,
-          transmission: 0.88,
-          ior: 1.4,
-          depthWrite: false
-        })
-      );
+      this.glassDomeMesh = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.35, 40, 40), new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, roughness: 0.05, transmission: 0.88, ior: 1.4, depthWrite: false }));
       this.glassDomeMesh.renderOrder = 10;
       this.scene.add(this.glassDomeMesh);
 
@@ -272,10 +232,7 @@ export class ThreeWorldRenderer {
         snowPos[i + 2] = r * Math.cos(phi);
       }
       snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
-      this.particleSystem = new THREE.Points(
-        snowGeo,
-        new THREE.PointsMaterial({ color: 0xffffff, size: 0.7, transparent: true, opacity: 0.8, depthWrite: false })
-      );
+      this.particleSystem = new THREE.Points(snowGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.7, transparent: true, opacity: 0.8, depthWrite: false }));
       this.scene.add(this.particleSystem);
     } else if (viewMode === 'RELIEF_DIORAMA' || viewMode === 'SQUARE_TILE') {
       this.reliefMesh = new THREE.Mesh(
@@ -297,7 +254,11 @@ export class ThreeWorldRenderer {
       const gridX = i % cols;
       const gridY = Math.floor(i / cols);
       const tile = state.grid[Math.min(state.config.height - 1, gridY)]?.[Math.min(state.config.width - 1, gridX)];
-      posAttr.setZ(i, tile ? Math.max(0, tile.elevation) * 4 : 0);
+      // Simulation elevation is stored in meter-like values (hundreds/thousands). Convert
+      // that range into deliberate scene units instead of multiplying meters directly,
+      // which previously produced enormous needle mountains and camera clipping.
+      const normalized = tile ? THREE.MathUtils.clamp(tile.elevation / 1800, -0.35, 1.25) : 0;
+      posAttr.setZ(i, normalized * 3.4);
     }
     posAttr.needsUpdate = true;
     geometry.computeVertexNormals();
@@ -307,20 +268,16 @@ export class ThreeWorldRenderer {
     if (!this.renderer || !this.camera) return null;
     const target = this.reliefMesh ?? this.surfaceMesh;
     if (!target) return null;
-
     const rect = this.renderer.domElement.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
-    this.mouseVec.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1
-    );
+    this.mouseVec.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.mouseVec, this.camera);
     const hit = this.raycaster.intersectObject(target, false)[0];
     if (!hit?.uv) return null;
-
-    const x = Math.max(0, Math.min(state.config.width - 1, Math.floor(hit.uv.x * state.config.width)));
-    const y = Math.max(0, Math.min(state.config.height - 1, Math.floor((1 - hit.uv.y) * state.config.height)));
-    return { x, y };
+    return {
+      x: Math.max(0, Math.min(state.config.width - 1, Math.floor(hit.uv.x * state.config.width))),
+      y: Math.max(0, Math.min(state.config.height - 1, Math.floor((1 - hit.uv.y) * state.config.height)))
+    };
   }
 
   public focusTile(tileX: number, tileY: number, width: number, height: number) {
@@ -350,7 +307,6 @@ export class ThreeWorldRenderer {
     this.disposeObject(this.reliefMesh);
     this.disposeObject(this.moonMesh);
     this.disposeObject(this.particleSystem);
-
     this.surfaceMesh = null;
     this.baseMesh = null;
     this.cloudMesh = null;
@@ -363,7 +319,6 @@ export class ThreeWorldRenderer {
   private startLoop() {
     const loop = () => {
       this.animFrameId = requestAnimationFrame(loop);
-
       this.zoomDistance += (this.targetZoom - this.zoomDistance) * 0.1;
       if (this.camera) {
         this.camera.position.x = this.zoomDistance * Math.sin(this.rotY) * Math.cos(this.rotX);
@@ -371,11 +326,9 @@ export class ThreeWorldRenderer {
         this.camera.position.z = this.zoomDistance * Math.cos(this.rotY) * Math.cos(this.rotX);
         this.camera.lookAt(0, 0, 0);
       }
-
       if (this.cloudMesh) this.cloudMesh.rotation.y += 0.0008;
       if (this.moonMesh) this.moonMesh.rotation.y += 0.003;
       if (this.particleSystem) this.particleSystem.rotation.y += 0.002;
-
       if (this.renderer && this.scene && this.camera) this.renderer.render(this.scene, this.camera);
     };
     this.animFrameId = requestAnimationFrame(loop);
@@ -405,20 +358,17 @@ export class ThreeWorldRenderer {
     if (this.animFrameId !== null) cancelAnimationFrame(this.animFrameId);
     this.animFrameId = null;
     this.clearWorldMeshes();
-
     if (this.starfieldPoints) {
       this.disposeObject(this.starfieldPoints);
       this.starfieldPoints = null;
     }
     this.worldTexture?.dispose();
     this.worldTexture = null;
-
     if (this.renderer) {
       this.renderer.dispose();
       const canvas = this.renderer.domElement;
       if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
     }
-
     this.renderer = null;
     this.scene = null;
     this.camera = null;
