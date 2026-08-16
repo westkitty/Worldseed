@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { WorldConfig, WorldState, InspectionSelection, WorldViewMode } from './types/simulation';
 import { SimulationEngine } from './simulation/engine';
+import { snapshotEngineRuntime, restoreEngineRuntime } from './persistence/runtimeSnapshot';
 import { soundscape } from './audio/soundscape';
 import { MapLayerMode, WorldCanvas } from './ui/components/WorldCanvas';
 import { TimelineControls } from './ui/components/TimelineControls';
@@ -100,9 +101,8 @@ export const App: React.FC = () => {
     setState({ ...newState });
   }, []);
 
-  // The SimulationEngine owns the authoritative world state. Keep its runtime controls
-  // synchronized with the React presentation copy so the next engine.step() cannot
-  // silently restore stale isPaused/simulationSpeed values.
+  // SimulationEngine owns the authoritative world state. Keep runtime controls synchronized
+  // so an engine tick cannot silently restore stale React-only values.
   const handleTogglePlay = useCallback(() => {
     ensureAudio();
     setState(prev => {
@@ -241,6 +241,8 @@ export const App: React.FC = () => {
     else if (action === 'OPEN_MODAL') setActiveModal(payload);
     else if (action === 'SELECT_ENTITY') setSelectedEntity(payload);
   };
+
+  const persistableState = snapshotEngineRuntime(engineRef.current, state);
 
   return (
     <div className="flex flex-col w-screen h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none">
@@ -482,13 +484,12 @@ export const App: React.FC = () => {
 
       {activeModal === 'SAVE_LOAD' && (
         <SaveLoadModal
-          state={state}
+          state={persistableState}
           onClose={() => setActiveModal(null)}
           onLoadWorld={loaded => {
-            const newEngine = new SimulationEngine(loaded.config);
-            (newEngine as any).state = loaded;
-            engineRef.current = newEngine;
-            setState({ ...loaded });
+            const restoredEngine = restoreEngineRuntime(loaded);
+            engineRef.current = restoredEngine;
+            setState({ ...restoredEngine.getState() });
           }}
           onResetWorld={handleCreateNewWorld}
         />
