@@ -2,7 +2,7 @@
 // Features True WebGL 3D Rendering (Three.js) for Globe, Snow Globe, Relief Diorama, Orbital Cosmos
 
 import React, { useEffect, useRef, useState } from 'react';
-import { BiomeType, InspectionSelection, Tile, WorldState, WorldViewMode } from '../../types/simulation';
+import { InspectionSelection, WorldState, WorldViewMode } from '../../types/simulation';
 import { Camera3D, WorldProjectionEngine } from '../../visuals/views/projections';
 import { WorldViewRenderer } from '../../visuals/views/WorldViewRenderer';
 import { ParticleEngine } from '../../visuals/particles/particleEngine';
@@ -40,7 +40,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   state,
   activeLayer,
   viewMode,
-  selectedEntity,
+  selectedEntity: _selectedEntity,
   pinnedEntity,
   onSelectEntity,
   onUnpinEntity,
@@ -54,15 +54,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
   const is3DView = viewMode === 'GLOBE' || viewMode === 'SNOW_GLOBE' || viewMode === 'RELIEF_DIORAMA' || viewMode === 'ORBITAL_VIEW';
 
-  // 3D & 2D Camera state
-  const [camera, setCamera] = useState<Camera3D>({
-    x: 0,
-    y: 0,
-    zoom: 1.0,
-    rotX: 0.15, // Pitch
-    rotY: 0.0   // Yaw
-  });
-
+  const [camera, setCamera] = useState<Camera3D>({ x: 0, y: 0, zoom: 1.0, rotX: 0.15, rotY: 0.0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragThresholdPassed, setDragThresholdPassed] = useState(false);
@@ -71,18 +63,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   const { grid, config } = state;
   const { width, height } = config;
 
-  // Initialize and update True WebGL 3D ThreeWorldRenderer
   useEffect(() => {
     if (is3DView && threeContainerRef.current) {
-      if (!threeRendererRef.current) {
-        threeRendererRef.current = new ThreeWorldRenderer(threeContainerRef.current);
-      }
+      if (!threeRendererRef.current) threeRendererRef.current = new ThreeWorldRenderer(threeContainerRef.current);
       threeRendererRef.current.updateScene(state, viewMode);
-    } else {
-      if (threeRendererRef.current) {
-        threeRendererRef.current.dispose();
-        threeRendererRef.current = null;
-      }
+    } else if (threeRendererRef.current) {
+      threeRendererRef.current.dispose();
+      threeRendererRef.current = null;
     }
 
     return () => {
@@ -93,24 +80,32 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     };
   }, [is3DView, viewMode, state]);
 
-  // Center on coordinates
   const handleCenterCoordinates = (tileX: number, tileY: number) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-
     if (is3DView && threeRendererRef.current) {
       const u = tileX / width;
-      const targetRotY = -(u - 0.5) * (Math.PI * 2) - Math.PI / 2;
-      threeRendererRef.current.rotY = targetRotY;
-    } else {
-      const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
-      const targetX = canvas.width / 2 - (tileX + 0.5) * tileSize;
-      const targetY = canvas.height / 2 - (tileY + 0.5) * tileSize;
-      setCamera(prev => ({ ...prev, x: targetX, y: targetY }));
+      threeRendererRef.current.rotY = -(u - 0.5) * (Math.PI * 2) - Math.PI / 2;
+      return;
     }
+    if (!canvas) return;
+
+    const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
+    const targetX = canvas.width / 2 - (tileX + 0.5) * tileSize;
+    const targetY = canvas.height / 2 - (tileY + 0.5) * tileSize;
+    setCamera(prev => ({ ...prev, x: targetX, y: targetY }));
   };
 
-  // Mouse Handlers
+  const selectTileAt = (coords: { x: number; y: number } | null) => {
+    if (!coords) return;
+    const tile = grid[coords.y]?.[coords.x];
+    if (!tile) return;
+
+    if (tile.settlementId) onSelectEntity({ type: 'SETTLEMENT', id: tile.settlementId });
+    else if (tile.ruins.length > 0) onSelectEntity({ type: 'RUIN', id: tile.ruins[0].id });
+    else if (tile.dominantSpeciesId) onSelectEntity({ type: 'SPECIES', id: tile.dominantSpeciesId });
+    else onSelectEntity({ type: 'TILE', id: `${coords.x},${coords.y}` });
+  };
+
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
     setDragThresholdPassed(false);
@@ -122,30 +117,21 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const dy = e.clientY - dragStart.y;
 
     if (isDragging) {
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        setDragThresholdPassed(true);
-      }
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) setDragThresholdPassed(true);
 
       if (is3DView && threeRendererRef.current) {
         threeRendererRef.current.rotate(dx, dy);
-        setDragStart({ x: e.clientX, y: e.clientY });
       } else {
-        setCamera(prev => ({
-          ...prev,
-          x: prev.x + dx,
-          y: prev.y + dy
-        }));
-        setDragStart({ x: e.clientX, y: e.clientY });
+        setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
       }
+      setDragStart({ x: e.clientX, y: e.clientY });
     }
 
-    // Raycast hover tile in 2D mode
     if (!is3DView && canvasRef.current) {
       const rect = canvasRef.current.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-
-      const hit = WorldProjectionEngine.screenToGrid(
+      setHoveredTile(WorldProjectionEngine.screenToGrid(
         mouseX,
         mouseY,
         canvasRef.current.width,
@@ -154,44 +140,64 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         viewMode,
         width,
         height
-      );
-      setHoveredTile(hit);
+      ));
     }
   };
 
-  const handleMouseUp = () => {
-    if (!dragThresholdPassed && hoveredTile) {
-      const tile = grid[hoveredTile.y]?.[hoveredTile.x];
-      if (tile) {
-        if (tile.settlementId) {
-          onSelectEntity({ type: 'SETTLEMENT', id: tile.settlementId });
-        } else if (tile.ruins.length > 0) {
-          onSelectEntity({ type: 'RUIN', id: tile.ruins[0].id });
-        } else if (tile.dominantSpeciesId) {
-          onSelectEntity({ type: 'SPECIES', id: tile.dominantSpeciesId });
-        } else {
-          onSelectEntity({ type: 'TILE', id: `${hoveredTile.x},${hoveredTile.y}` });
-        }
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (!dragThresholdPassed) {
+      if (is3DView && threeRendererRef.current) {
+        selectTileAt(threeRendererRef.current.pickTile(e.clientX, e.clientY, state));
+      } else {
+        selectTileAt(hoveredTile);
       }
     }
     setIsDragging(false);
     setDragThresholdPassed(false);
   };
 
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+    setDragThresholdPassed(false);
+    if (!is3DView) setHoveredTile(null);
+  };
+
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     if (is3DView && threeRendererRef.current) {
       threeRendererRef.current.zoom(e.deltaY);
-    } else {
-      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
-      setCamera(prev => ({
-        ...prev,
-        zoom: Math.max(0.4, Math.min(10.0, prev.zoom * zoomFactor))
-      }));
+      return;
     }
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const baseTileSize = Math.min(canvas.width, canvas.height) / height;
+    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+
+    setCamera(prev => {
+      const oldTileSize = baseTileSize * prev.zoom;
+      const oldOriginX = (canvas.width - width * oldTileSize) / 2 + prev.x;
+      const oldOriginY = (canvas.height - height * oldTileSize) / 2 + prev.y;
+      const worldX = (mouseX - oldOriginX) / oldTileSize;
+      const worldY = (mouseY - oldOriginY) / oldTileSize;
+
+      const nextZoom = Math.max(0.4, Math.min(10.0, prev.zoom * zoomFactor));
+      const newTileSize = baseTileSize * nextZoom;
+      const baseOriginX = (canvas.width - width * newTileSize) / 2;
+      const baseOriginY = (canvas.height - height * newTileSize) / 2;
+
+      return {
+        ...prev,
+        zoom: nextZoom,
+        x: mouseX - worldX * newTileSize - baseOriginX,
+        y: mouseY - worldY * newTileSize - baseOriginY
+      };
+    });
   };
 
-  // Main 2D Render Loop (for Cartographic Flat Atlas & Square Slab)
   useEffect(() => {
     if (is3DView) return;
     const canvas = canvasRef.current;
@@ -201,26 +207,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     let animFrameId: number;
     let time = 0;
-
     const render = () => {
       time += 0.02;
+      WorldViewRenderer.renderView(ctx, canvas.width, canvas.height, state, viewMode, camera, hoveredTile, time);
 
-      WorldViewRenderer.renderView(
-        ctx,
-        canvas.width,
-        canvas.height,
-        state,
-        viewMode,
-        camera,
-        hoveredTile,
-        time
-      );
-
-      // Particle Overlay
       const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
       const originX = (canvas.width - width * tileSize) / 2 + camera.x;
       const originY = (canvas.height - height * tileSize) / 2 + camera.y;
-
       particleEngineRef.current.update(width, height, time);
       particleEngineRef.current.render(ctx, originX, originY, tileSize, canvas.width, canvas.height);
 
@@ -228,11 +221,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     };
 
     render();
-
     return () => cancelAnimationFrame(animFrameId);
-  }, [is3DView, state, activeLayer, viewMode, camera, hoveredTile]);
+  }, [is3DView, state, activeLayer, viewMode, camera, hoveredTile, height, width]);
 
-  // Sync canvas and 3D renderer size on mount & window resize
   useEffect(() => {
     const handleResize = () => {
       const parent = containerRef.current;
@@ -244,10 +235,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         canvasRef.current.width = w;
         canvasRef.current.height = h;
       }
-      if (threeRendererRef.current) {
-        threeRendererRef.current.resize(w, h);
-      }
+      threeRendererRef.current?.resize(w, h);
     };
+
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -262,35 +252,14 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
       onWheel={handleWheel}
     >
-      {/* Genuine True 3D WebGL Three.js Container */}
-      {is3DView && (
-        <div ref={threeContainerRef} className="w-full h-full absolute inset-0 pointer-events-none" />
-      )}
+      {is3DView && <div ref={threeContainerRef} className="w-full h-full absolute inset-0 pointer-events-none" />}
+      {!is3DView && <canvas ref={canvasRef} className="w-full h-full" />}
 
-      {/* Cartographic 2D Flat Canvas */}
-      {!is3DView && (
-        <canvas
-          ref={canvasRef}
-          className="w-full h-full"
-        />
-      )}
-
-      {/* Minimap HUD */}
-      <Minimap
-        state={state}
-        camera={{ x: camera.x, y: camera.y, zoom: camera.zoom }}
-        onCenterCoordinates={handleCenterCoordinates}
-      />
-
-      {/* Map Layer Legend HUD */}
-      <MapLegend
-        activeLayer={activeLayer}
-        state={state}
-      />
-
-      {/* Pinned Entity Follower */}
+      <Minimap state={state} camera={{ x: camera.x, y: camera.y, zoom: camera.zoom }} onCenterCoordinates={handleCenterCoordinates} />
+      <MapLegend activeLayer={activeLayer} state={state} />
       <PinnedEntityFollower
         pinnedEntity={pinnedEntity}
         state={state}
@@ -299,7 +268,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         onOpenWhy={onOpenWhy}
       />
 
-      {/* Mini Hover HUD */}
       {currentHoveredTileData && (
         <div className="absolute bottom-4 left-4 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md rounded-lg p-3 text-xs text-slate-200 shadow-2xl pointer-events-none min-w-[220px]">
           <div className="flex items-center justify-between font-mono font-semibold text-sky-400 mb-1 border-b border-slate-700 pb-1">
