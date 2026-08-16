@@ -1,11 +1,12 @@
 // Multi-Layer & Multi-View Cinematic Canvas Renderer supporting 6 Presentation Modes
+// Features True WebGL 3D Rendering (Three.js) for Globe, Snow Globe, Relief Diorama, Orbital Cosmos
 
 import React, { useEffect, useRef, useState } from 'react';
 import { BiomeType, InspectionSelection, Tile, WorldState, WorldViewMode } from '../../types/simulation';
-import { PRNG } from '../../simulation/math/prng';
 import { Camera3D, WorldProjectionEngine } from '../../visuals/views/projections';
 import { WorldViewRenderer } from '../../visuals/views/WorldViewRenderer';
 import { ParticleEngine } from '../../visuals/particles/particleEngine';
+import { ThreeWorldRenderer } from '../../visuals/3d/ThreeWorldRenderer';
 import { Minimap } from './Minimap';
 import { MapLegend } from './MapLegend';
 import { PinnedEntityFollower } from './PinnedEntityFollower';
@@ -45,8 +46,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   onUnpinEntity,
   onOpenWhy
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const threeContainerRef = useRef<HTMLDivElement | null>(null);
+  const threeRendererRef = useRef<ThreeWorldRenderer | null>(null);
   const particleEngineRef = useRef<ParticleEngine>(new ParticleEngine());
+
+  const is3DView = viewMode === 'GLOBE' || viewMode === 'SNOW_GLOBE' || viewMode === 'RELIEF_DIORAMA' || viewMode === 'ORBITAL_VIEW';
 
   // 3D & 2D Camera state
   const [camera, setCamera] = useState<Camera3D>({
@@ -65,15 +71,37 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   const { grid, config } = state;
   const { width, height } = config;
 
+  // Initialize and update True WebGL 3D ThreeWorldRenderer
+  useEffect(() => {
+    if (is3DView && threeContainerRef.current) {
+      if (!threeRendererRef.current) {
+        threeRendererRef.current = new ThreeWorldRenderer(threeContainerRef.current);
+      }
+      threeRendererRef.current.updateScene(state, viewMode);
+    } else {
+      if (threeRendererRef.current) {
+        threeRendererRef.current.dispose();
+        threeRendererRef.current = null;
+      }
+    }
+
+    return () => {
+      if (!is3DView && threeRendererRef.current) {
+        threeRendererRef.current.dispose();
+        threeRendererRef.current = null;
+      }
+    };
+  }, [is3DView, viewMode, state]);
+
   // Center on coordinates
   const handleCenterCoordinates = (tileX: number, tileY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    if (viewMode === 'GLOBE' || viewMode === 'SNOW_GLOBE' || viewMode === 'ORBITAL_VIEW') {
+    if (is3DView && threeRendererRef.current) {
       const u = tileX / width;
       const targetRotY = -(u - 0.5) * (Math.PI * 2) - Math.PI / 2;
-      setCamera(prev => ({ ...prev, rotY: targetRotY, x: 0, y: 0 }));
+      threeRendererRef.current.rotY = targetRotY;
     } else {
       const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
       const targetX = canvas.width / 2 - (tileX + 0.5) * tileSize;
@@ -83,16 +111,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   };
 
   // Mouse Handlers
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
     setDragThresholdPassed(false);
     setDragStart({ x: e.clientX, y: e.clientY });
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
+  const handleMouseMove = (e: React.MouseEvent) => {
     const dx = e.clientX - dragStart.x;
     const dy = e.clientY - dragStart.y;
 
@@ -101,16 +126,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         setDragThresholdPassed(true);
       }
 
-      if (viewMode === 'GLOBE' || viewMode === 'SNOW_GLOBE' || viewMode === 'ORBITAL_VIEW') {
-        // Orbit / Rotate spherical views
-        setCamera(prev => ({
-          ...prev,
-          rotY: prev.rotY + dx * 0.008,
-          rotX: Math.max(-1.2, Math.min(1.2, prev.rotX + dy * 0.008))
-        }));
+      if (is3DView && threeRendererRef.current) {
+        threeRendererRef.current.rotate(dx, dy);
         setDragStart({ x: e.clientX, y: e.clientY });
       } else {
-        // Pan planar views
         setCamera(prev => ({
           ...prev,
           x: prev.x + dx,
@@ -120,53 +139,61 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       }
     }
 
-    // Raycast hover tile
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    // Raycast hover tile in 2D mode
+    if (!is3DView && canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
 
-    const hit = WorldProjectionEngine.screenToGrid(
-      mouseX,
-      mouseY,
-      canvas.width,
-      canvas.height,
-      camera,
-      viewMode,
-      width,
-      height
-    );
-
-    setHoveredTile(hit);
+      const hit = WorldProjectionEngine.screenToGrid(
+        mouseX,
+        mouseY,
+        canvasRef.current.width,
+        canvasRef.current.height,
+        camera,
+        viewMode,
+        width,
+        height
+      );
+      setHoveredTile(hit);
+    }
   };
 
-  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseUp = () => {
     if (!dragThresholdPassed && hoveredTile) {
-      const tile = grid[hoveredTile.y][hoveredTile.x];
-      if (tile.settlementId) {
-        onSelectEntity({ type: 'SETTLEMENT', id: tile.settlementId });
-      } else if (tile.ruins.length > 0) {
-        onSelectEntity({ type: 'RUIN', id: tile.ruins[0].id });
-      } else if (tile.dominantSpeciesId) {
-        onSelectEntity({ type: 'SPECIES', id: tile.dominantSpeciesId });
-      } else {
-        onSelectEntity({ type: 'TILE', id: `${hoveredTile.x},${hoveredTile.y}` });
+      const tile = grid[hoveredTile.y]?.[hoveredTile.x];
+      if (tile) {
+        if (tile.settlementId) {
+          onSelectEntity({ type: 'SETTLEMENT', id: tile.settlementId });
+        } else if (tile.ruins.length > 0) {
+          onSelectEntity({ type: 'RUIN', id: tile.ruins[0].id });
+        } else if (tile.dominantSpeciesId) {
+          onSelectEntity({ type: 'SPECIES', id: tile.dominantSpeciesId });
+        } else {
+          onSelectEntity({ type: 'TILE', id: `${hoveredTile.x},${hoveredTile.y}` });
+        }
       }
     }
     setIsDragging(false);
     setDragThresholdPassed(false);
   };
 
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+  const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
-    setCamera(prev => ({
-      ...prev,
-      zoom: Math.max(0.4, Math.min(10.0, prev.zoom * zoomFactor))
-    }));
+    if (is3DView && threeRendererRef.current) {
+      threeRendererRef.current.zoom(e.deltaY);
+    } else {
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+      setCamera(prev => ({
+        ...prev,
+        zoom: Math.max(0.4, Math.min(10.0, prev.zoom * zoomFactor))
+      }));
+    }
   };
 
-  // Main Render Loop
+  // Main 2D Render Loop (for Cartographic Flat Atlas & Square Slab)
   useEffect(() => {
+    if (is3DView) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -178,7 +205,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const render = () => {
       time += 0.02;
 
-      // Render Active World View Mode
       WorldViewRenderer.renderView(
         ctx,
         canvas.width,
@@ -190,15 +216,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         time
       );
 
-      // Particle Overlay (Weather & Ambient effects)
-      if (viewMode === 'FLAT_ATLAS' || viewMode === 'SQUARE_TILE') {
-        const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
-        const originX = (canvas.width - width * tileSize) / 2 + camera.x;
-        const originY = (canvas.height - height * tileSize) / 2 + camera.y;
+      // Particle Overlay
+      const tileSize = (Math.min(canvas.width, canvas.height) / height) * camera.zoom;
+      const originX = (canvas.width - width * tileSize) / 2 + camera.x;
+      const originY = (canvas.height - height * tileSize) / 2 + camera.y;
 
-        particleEngineRef.current.update(width, height, time);
-        particleEngineRef.current.render(ctx, originX, originY, tileSize, canvas.width, canvas.height);
-      }
+      particleEngineRef.current.update(width, height, time);
+      particleEngineRef.current.render(ctx, originX, originY, tileSize, canvas.width, canvas.height);
 
       animFrameId = requestAnimationFrame(render);
     };
@@ -206,14 +230,22 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     render();
 
     return () => cancelAnimationFrame(animFrameId);
-  }, [state, activeLayer, viewMode, camera, hoveredTile]);
+  }, [is3DView, state, activeLayer, viewMode, camera, hoveredTile]);
 
-  // Sync canvas size on mount & window resize
+  // Sync canvas and 3D renderer size on mount & window resize
   useEffect(() => {
     const handleResize = () => {
+      const parent = containerRef.current;
+      if (!parent) return;
+      const w = parent.clientWidth || 800;
+      const h = parent.clientHeight || 600;
+
       if (canvasRef.current) {
-        canvasRef.current.width = canvasRef.current.parentElement?.clientWidth || 800;
-        canvasRef.current.height = canvasRef.current.parentElement?.clientHeight || 600;
+        canvasRef.current.width = w;
+        canvasRef.current.height = h;
+      }
+      if (threeRendererRef.current) {
+        threeRendererRef.current.resize(w, h);
       }
     };
     handleResize();
@@ -224,15 +256,26 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   const currentHoveredTileData = hoveredTile ? grid[hoveredTile.y]?.[hoveredTile.x] : null;
 
   return (
-    <div className="relative w-full h-full overflow-hidden select-none bg-slate-950">
-      <canvas
-        ref={canvasRef}
-        className="w-full h-full cursor-grab active:cursor-grabbing"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onWheel={handleWheel}
-      />
+    <div
+      ref={containerRef}
+      className="relative w-full h-full overflow-hidden select-none bg-slate-950 cursor-grab active:cursor-grabbing"
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onWheel={handleWheel}
+    >
+      {/* Genuine True 3D WebGL Three.js Container */}
+      {is3DView && (
+        <div ref={threeContainerRef} className="w-full h-full absolute inset-0 pointer-events-none" />
+      )}
+
+      {/* Cartographic 2D Flat Canvas */}
+      {!is3DView && (
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full"
+        />
+      )}
 
       {/* Minimap HUD */}
       <Minimap

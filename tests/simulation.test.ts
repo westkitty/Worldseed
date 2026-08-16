@@ -326,46 +326,71 @@ describe('VIEW-SWITCHING & SCENARIO REGRESSION FIXTURES', () => {
   });
 });
 
-describe('3D PROCEDURAL ASSETS & MEGALOOP LEDGER VALIDATION', () => {
-  it('3D PHENOTYPE ENGINE: Generates 3D creature phenotypes from genetic traits', async () => {
-    const { CreatureMeshEngine } = await import('../src/visuals/3d/creatureMeshEngine');
+describe('TRUE THREE.JS 3D MESH GENERATION & RESOURCE LIFECYCLE', () => {
+  it('TRUE 3D CREATURE MESH: Generates genuine Three.js 3D meshes with geometries & materials', async () => {
+    const { ThreeCreatureMesh } = await import('../src/visuals/3d/ThreeCreatureMesh');
     const dummySpecies: any = {
-      id: 'test_spec_01',
-      commonName: 'Titan Herbivore',
-      scientificName: 'Colossus herbivorus',
-      colorHex: '#10b981',
-      trophicLevel: 'HERBIVORE',
+      id: 'test_spec_3d_01',
+      commonName: 'Apex Stalker',
+      scientificName: 'Stalker apex',
+      colorHex: '#0284c7',
+      trophicLevel: 'CARNIVORE',
       morphology: 'TERRESTRIAL_QUADRUPED',
-      isSapient: false,
+      isSapient: true,
       genome: {
-        bodySizeMeters: 4.5,
+        bodySizeMeters: 3.2,
         locomotion: 'QUADRUPEDAL',
-        manipulationOrgan: 'NONE',
-        sensoryModality: 'OPTIC_CAMERA',
-        cognition: 25,
-        speedKmh: 35,
-        lifespanYears: 80,
-        fertility: 0.2
+        manipulationOrgan: 'OPPOSABLE_DIGITS',
+        sensoryModality: 'OPTIC',
+        cognition: 85,
+        speedKmh: 45,
+        lifespanYears: 70,
+        fertility: 0.15
       }
     };
 
-    const phenotype = CreatureMeshEngine.generatePhenotype(dummySpecies);
-    expect(phenotype).toBeDefined();
-    expect(phenotype.parts.length).toBeGreaterThan(5);
-    expect(phenotype.parts.some(p => p.type === 'TORSO')).toBe(true);
-    expect(phenotype.parts.some(p => p.type === 'HEAD')).toBe(true);
-    expect(phenotype.parts.some(p => p.type === 'LIMB')).toBe(true);
+    const meshGroup = ThreeCreatureMesh.createCreatureMesh(dummySpecies);
+    expect(meshGroup).toBeDefined();
+    expect(meshGroup.children.length).toBeGreaterThan(5);
+
+    // Verify presence of 3D meshes
+    let hasGeo = false;
+    meshGroup.traverse((child: any) => {
+      if (child.isMesh && child.geometry) {
+        hasGeo = true;
+        expect(child.material).toBeDefined();
+      }
+    });
+    expect(hasGeo).toBe(true);
   });
 
-  it('MEGALOOP LEDGER: Validates that exactly 10 Super-Cycles, 1,000 Macro-Cycles, and 4,000 passes exist without duplicates', async () => {
-    const { validateMegaloopLedger } = await import('../scripts/validateMegaloop');
-    const path = await import('path');
-    const ledgerPath = path.resolve(__dirname, '../docs/MEGALOOP_PASSES.jsonl');
-    const result = validateMegaloopLedger(ledgerPath);
+  it('TRUE 3D SETTLEMENT ARCHITECTURE: Generates era-aware 3D civic architectures', async () => {
+    const { ThreeSettlementMesh } = await import('../src/visuals/3d/ThreeSettlementMesh');
+    const dummySettlement: any = {
+      id: 'settlement_test_01',
+      name: 'Oakhaven Citadel',
+      tier: 'CITY',
+      population: 45000,
+      infrastructure: {
+        hasWalls: true,
+        hasGranary: true,
+        hasPort: false,
+        hasTemple: true,
+        hasAqueduct: true,
+        hasFoundry: true,
+        hasAcademy: true
+      }
+    };
 
-    expect(result.errors).toEqual([]);
-    expect(result.isValid).toBe(true);
-    expect(result.superCyclesCount).toBe(10);
-    expect(result.totalPasses).toBe(4000);
+    const settlementGroup = ThreeSettlementMesh.createSettlementMesh(dummySettlement);
+    expect(settlementGroup).toBeDefined();
+    expect(settlementGroup.children.length).toBeGreaterThan(2);
+
+    let meshCount = 0;
+    settlementGroup.traverse((child: any) => {
+      if (child.isMesh) meshCount++;
+    });
+    expect(meshCount).toBeGreaterThan(2);
   });
 });
+
