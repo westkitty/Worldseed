@@ -27,3 +27,29 @@ jobs:
 
     - name: Run Production Build
       run: npm run build
+
+    - name: Install Playwright for browser verification
+      run: |
+        npm install --no-save playwright@1.55.0
+        npx playwright install --with-deps chromium
+
+    - name: Launch WORLDSEED preview
+      run: |
+        nohup npm run preview -- --host 127.0.0.1 --port 5173 > /tmp/worldseed-preview.log 2>&1 &
+        for i in {1..30}; do
+          if curl -fsS http://127.0.0.1:5173 >/dev/null; then exit 0; fi
+          sleep 1
+        done
+        cat /tmp/worldseed-preview.log
+        exit 1
+
+    - name: Run real Chromium playtest
+      run: node scripts/browser-playtest.mjs
+
+    - name: Upload browser-playtest evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: worldseed-browser-playtest
+        path: artifacts/browser-playtest
+        if-no-files-found: warn
