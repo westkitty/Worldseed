@@ -2,11 +2,10 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Layers, Search, Volume2, VolumeX, Sparkles, RefreshCw, Compass,
-  GitBranch, BookOpen, GitFork, BarChart2, Save, HelpCircle, Shield, Pin,
-  Settings, Globe, Eye, Dna, Landmark, GitCompare
+  Layers, Search, Volume2, VolumeX, Sparkles,
+  Settings, Globe, Dna, Landmark, GitCompare
 } from 'lucide-react';
-import { WorldConfig, WorldPreset, WorldState, InspectionSelection, WorldViewMode } from './types/simulation';
+import { WorldConfig, WorldState, InspectionSelection, WorldViewMode } from './types/simulation';
 import { SimulationEngine } from './simulation/engine';
 import { soundscape } from './audio/soundscape';
 import { MapLayerMode, WorldCanvas } from './ui/components/WorldCanvas';
@@ -54,7 +53,6 @@ export const App: React.FC = () => {
     return engine.getState();
   });
 
-  // Map, View Mode & Inspector State
   const [activeLayer, setActiveLayer] = useState<MapLayerMode>('PHYSICAL');
   const [viewMode, setViewMode] = useState<WorldViewMode>('FLAT_ATLAS');
   const [selectedEntity, setSelectedEntity] = useState<InspectionSelection | null>(null);
@@ -63,7 +61,6 @@ export const App: React.FC = () => {
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const [isImmersionMode, setIsImmersionMode] = useState(false);
 
-  // Modal Dialogs State
   const [activeModal, setActiveModal] = useState<
     | 'WHY'
     | 'TREE_OF_LIFE'
@@ -85,7 +82,6 @@ export const App: React.FC = () => {
   >(null);
   const [whyNodeId, setWhyNodeId] = useState<string | null>(null);
 
-  // Initialize Audio upon first user interaction
   const ensureAudio = useCallback(() => {
     soundscape.init();
     soundscape.resume();
@@ -98,46 +94,52 @@ export const App: React.FC = () => {
     soundscape.setMuted(newMuted);
   };
 
-  // Main Simulation Step Runner
   const handleStepYears = useCallback((years: number) => {
     if (!engineRef.current) return;
     const newState = engineRef.current.step(years);
     setState({ ...newState });
   }, []);
 
+  // The SimulationEngine owns the authoritative world state. Keep its runtime controls
+  // synchronized with the React presentation copy so the next engine.step() cannot
+  // silently restore stale isPaused/simulationSpeed values.
   const handleTogglePlay = useCallback(() => {
     ensureAudio();
     setState(prev => {
       const nextPaused = !prev.isPaused;
+      const engineState = engineRef.current?.getState();
+      if (engineState) engineState.isPaused = nextPaused;
       return { ...prev, isPaused: nextPaused };
     });
   }, [ensureAudio]);
 
   const handleSetSpeed = useCallback((speed: number) => {
-    setState(prev => ({ ...prev, simulationSpeed: speed }));
+    const safeSpeed = Math.max(1, Math.min(1000, speed));
+    setState(prev => {
+      const engineState = engineRef.current?.getState();
+      if (engineState) engineState.simulationSpeed = safeSpeed;
+      return { ...prev, simulationSpeed: safeSpeed };
+    });
   }, []);
 
-  // Continuous Simulation Tick Engine
   useEffect(() => {
     if (state.isPaused) return;
 
     const intervalMs = Math.max(20, Math.floor(1000 / state.simulationSpeed));
     const stepCount = state.simulationSpeed > 100 ? 5 : 1;
 
-    const interval = setInterval(() => {
-      if (engineRef.current && !state.isPaused) {
-        const newState = engineRef.current.step(stepCount);
-        setState({ ...newState });
-      }
+    const interval = window.setInterval(() => {
+      if (!engineRef.current) return;
+      const newState = engineRef.current.step(stepCount);
+      setState({ ...newState });
     }, intervalMs);
 
-    return () => clearInterval(interval);
+    return () => window.clearInterval(interval);
   }, [state.isPaused, state.simulationSpeed]);
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -167,7 +169,6 @@ export const App: React.FC = () => {
       else if (e.key.toLowerCase() === 'w') setActiveModal('WORLD_LAB');
       else if (e.key.toLowerCase() === 'd') setActiveModal('DISCOVERIES');
       else if (e.key.toLowerCase() === 'v') {
-        // Cycle world view mode
         const modes: WorldViewMode[] = ['FLAT_ATLAS', 'SQUARE_TILE', 'GLOBE', 'SNOW_GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW'];
         const nextIdx = (modes.indexOf(viewMode) + 1) % modes.length;
         setViewMode(modes[nextIdx]);
@@ -178,7 +179,6 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleTogglePlay, handleSetSpeed, viewMode]);
 
-  // Search Engine across all entities
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
@@ -193,26 +193,20 @@ export const App: React.FC = () => {
       return;
     }
 
-    const foundSett = Object.values(state.settlements).find(
-      s => s.name.toLowerCase().includes(q)
-    );
+    const foundSett = Object.values(state.settlements).find(s => s.name.toLowerCase().includes(q));
     if (foundSett) {
       setSelectedEntity({ type: 'SETTLEMENT', id: foundSett.id });
       setSearchQuery('');
       return;
     }
 
-    const foundRuin = Object.values(state.ruins).find(
-      r => r.originalName.toLowerCase().includes(q)
-    );
+    const foundRuin = Object.values(state.ruins).find(r => r.originalName.toLowerCase().includes(q));
     if (foundRuin) {
       setSelectedEntity({ type: 'RUIN', id: foundRuin.id });
       setSearchQuery('');
-      return;
     }
   };
 
-  // Reset World to new seed / config
   const handleCreateNewWorld = (newConfig: WorldConfig) => {
     const newEngine = new SimulationEngine(newConfig);
     engineRef.current = newEngine;
@@ -222,7 +216,6 @@ export const App: React.FC = () => {
     setState(newEngine.getState());
   };
 
-  // Interventions / Divine Actions
   const handleApplyIntervention = (type: any, params?: any) => {
     if (!engineRef.current) return;
     engineRef.current.applyIntervention(type, params);
@@ -230,7 +223,6 @@ export const App: React.FC = () => {
     setState({ ...engineRef.current.getState() });
   };
 
-  // Alternate History Fork
   const handleForkBranch = (branchName: string) => {
     if (!engineRef.current) return;
     engineRef.current.forkBranch(branchName);
@@ -238,30 +230,22 @@ export const App: React.FC = () => {
     setState({ ...engineRef.current.getState() });
   };
 
-  // Open "WHY?" Investigator
   const handleOpenWhy = (nodeId?: string) => {
     const id = nodeId || (selectedEntity ? `cause_${selectedEntity.type.toLowerCase()}_${selectedEntity.id}` : Object.keys(state.causalGraph)[0]);
     setWhyNodeId(id);
     setActiveModal('WHY');
   };
 
-  // Command palette action dispatcher
   const handleCommandPaletteAction = (action: string, payload?: any) => {
-    if (action === 'SET_VIEW') {
-      setViewMode(payload);
-    } else if (action === 'OPEN_MODAL') {
-      setActiveModal(payload);
-    } else if (action === 'SELECT_ENTITY') {
-      setSelectedEntity(payload);
-    }
+    if (action === 'SET_VIEW') setViewMode(payload);
+    else if (action === 'OPEN_MODAL') setActiveModal(payload);
+    else if (action === 'SELECT_ENTITY') setSelectedEntity(payload);
   };
 
   return (
     <div className="flex flex-col w-screen h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none">
-      {/* 1. Header Bar (Hidden in Immersion Mode) */}
       {!isImmersionMode && (
         <header className="h-14 bg-slate-900/90 border-b border-slate-800 backdrop-blur-md px-4 flex items-center justify-between z-30 shadow-md">
-          {/* Brand & World Seed */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <button
@@ -274,7 +258,7 @@ export const App: React.FC = () => {
               <div>
                 <h1 className="font-serif font-black tracking-wider text-sm text-white flex items-center gap-1.5">
                   <span>WORLDSEED</span>
-                  <span className="text-[10px] font-mono font-normal text-sky-400 bg-sky-950 px-1.5 py-0.2 rounded border border-sky-800">
+                  <span className="text-[10px] font-mono font-normal text-sky-400 bg-sky-950 px-1.5 rounded border border-sky-800">
                     {state.config.genre || 'REALISTIC'}
                   </span>
                 </h1>
@@ -285,7 +269,6 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Global Search & Command Palette Trigger */}
           <div className="flex items-center gap-2">
             <form onSubmit={handleSearchSubmit} className="relative w-64 max-w-xs hidden md:block">
               <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
@@ -313,9 +296,7 @@ export const App: React.FC = () => {
             </button>
           </div>
 
-          {/* World View Mode & Layer Switcher */}
           <div className="flex items-center gap-2">
-            {/* World View Mode Selector */}
             <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700 text-xs font-mono">
               <Globe size={14} className="text-amber-400" />
               <select
@@ -332,7 +313,6 @@ export const App: React.FC = () => {
               </select>
             </div>
 
-            {/* Layer Selector */}
             <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700 text-xs font-mono">
               <Layers size={14} className="text-sky-400" />
               <select
@@ -355,7 +335,6 @@ export const App: React.FC = () => {
               </select>
             </div>
 
-            {/* Quick 3D Field Guide & Dossier shortcuts */}
             <button
               onClick={() => setActiveModal('FIELD_GUIDE')}
               className="p-2 bg-slate-800 border border-slate-700 text-emerald-400 hover:text-white rounded-lg"
@@ -380,7 +359,6 @@ export const App: React.FC = () => {
               <GitCompare size={16} />
             </button>
 
-            {/* Settings Button */}
             <button
               onClick={() => setActiveModal('SETTINGS')}
               className="p-2 bg-slate-800 border border-slate-700 text-slate-400 hover:text-white rounded-lg"
@@ -389,7 +367,6 @@ export const App: React.FC = () => {
               <Settings size={16} />
             </button>
 
-            {/* Audio Button */}
             <button
               onClick={toggleAudio}
               className={`p-2 rounded-lg border transition-all ${
@@ -406,7 +383,6 @@ export const App: React.FC = () => {
         </header>
       )}
 
-      {/* 2. Main Simulation Canvas & Contextual Inspector */}
       <main className="flex-1 relative w-full h-full overflow-hidden">
         <WorldCanvas
           state={state}
@@ -419,16 +395,10 @@ export const App: React.FC = () => {
           onOpenWhy={handleOpenWhy}
         />
 
-        {/* Immersion Mode Overlay */}
         {isImmersionMode && (
-          <ImmersionOverlay
-            state={state}
-            onExitImmersion={() => setIsImmersionMode(false)}
-            onTogglePlay={handleTogglePlay}
-          />
+          <ImmersionOverlay state={state} onExitImmersion={() => setIsImmersionMode(false)} onTogglePlay={handleTogglePlay} />
         )}
 
-        {/* Floating Contextual Inspector Panel */}
         {!isImmersionMode && (
           <InspectorPanel
             selection={selectedEntity}
@@ -444,7 +414,6 @@ export const App: React.FC = () => {
         )}
       </main>
 
-      {/* 3. Bottom Timeline Toolbar (Hidden in Immersion Mode) */}
       {!isImmersionMode && (
         <TimelineControls
           state={state}
@@ -463,14 +432,8 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* 4. Modal Dialogs */}
       {activeModal === 'WHY' && (
-        <WhyModal
-          nodeId={whyNodeId}
-          state={state}
-          onClose={() => setActiveModal(null)}
-          onSelectNode={nodeId => setWhyNodeId(nodeId)}
-        />
+        <WhyModal nodeId={whyNodeId} state={state} onClose={() => setActiveModal(null)} onSelectNode={nodeId => setWhyNodeId(nodeId)} />
       )}
 
       {activeModal === 'TREE_OF_LIFE' && (
@@ -497,27 +460,14 @@ export const App: React.FC = () => {
         />
       )}
 
-      {activeModal === 'LANGUAGES' && (
-        <LanguageFamilyModal
-          state={state}
-          onClose={() => setActiveModal(null)}
-        />
-      )}
+      {activeModal === 'LANGUAGES' && <LanguageFamilyModal state={state} onClose={() => setActiveModal(null)} />}
 
       {activeModal === 'BRANCH' && (
-        <BranchCompareModal
-          state={state}
-          onClose={() => setActiveModal(null)}
-          onForkBranch={handleForkBranch}
-        />
+        <BranchCompareModal state={state} onClose={() => setActiveModal(null)} onForkBranch={handleForkBranch} />
       )}
 
       {activeModal === 'WORLD_LAB' && (
-        <WorldLabModal
-          state={state}
-          onClose={() => setActiveModal(null)}
-          onApplyIntervention={handleApplyIntervention}
-        />
+        <WorldLabModal state={state} onClose={() => setActiveModal(null)} onApplyIntervention={handleApplyIntervention} />
       )}
 
       {activeModal === 'DISCOVERIES' && (
@@ -528,12 +478,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {activeModal === 'STATS' && (
-        <StatsModal
-          state={state}
-          onClose={() => setActiveModal(null)}
-        />
-      )}
+      {activeModal === 'STATS' && <StatsModal state={state} onClose={() => setActiveModal(null)} />}
 
       {activeModal === 'SAVE_LOAD' && (
         <SaveLoadModal
@@ -543,47 +488,27 @@ export const App: React.FC = () => {
             const newEngine = new SimulationEngine(loaded.config);
             (newEngine as any).state = loaded;
             engineRef.current = newEngine;
-            setState(loaded);
+            setState({ ...loaded });
           }}
           onResetWorld={handleCreateNewWorld}
         />
       )}
 
-      {activeModal === 'HOTKEYS' && (
-        <HotkeysModal
-          onClose={() => setActiveModal(null)}
-        />
-      )}
+      {activeModal === 'HOTKEYS' && <HotkeysModal onClose={() => setActiveModal(null)} />}
 
       {activeModal === 'SETTINGS' && (
-        <SettingsModal
-          currentViewMode={viewMode}
-          onSetViewMode={setViewMode}
-          onClose={() => setActiveModal(null)}
-        />
+        <SettingsModal currentViewMode={viewMode} onSetViewMode={setViewMode} onClose={() => setActiveModal(null)} />
       )}
 
       {activeModal === 'NEW_WORLD_WIZARD' && (
-        <NewWorldWizardModal
-          onClose={() => setActiveModal(null)}
-          onCreateWorld={handleCreateNewWorld}
-        />
+        <NewWorldWizardModal onClose={() => setActiveModal(null)} onCreateWorld={handleCreateNewWorld} />
       )}
 
       {activeModal === 'COMMAND_PALETTE' && (
-        <CommandPaletteModal
-          state={state}
-          onClose={() => setActiveModal(null)}
-          onSelectAction={handleCommandPaletteAction}
-        />
+        <CommandPaletteModal state={state} onClose={() => setActiveModal(null)} onSelectAction={handleCommandPaletteAction} />
       )}
 
-      {activeModal === 'TWIN_WORLDS' && (
-        <TwinWorldsModal
-          primaryState={state}
-          onClose={() => setActiveModal(null)}
-        />
-      )}
+      {activeModal === 'TWIN_WORLDS' && <TwinWorldsModal primaryState={state} onClose={() => setActiveModal(null)} />}
 
       {activeModal === 'FIELD_GUIDE' && (
         <FieldGuideModal
@@ -598,11 +523,7 @@ export const App: React.FC = () => {
       )}
 
       {activeModal === 'CIVILIZATION_DOSSIER' && (
-        <CivilizationDossierModal
-          state={state}
-          onClose={() => setActiveModal(null)}
-          onOpenWhy={handleOpenWhy}
-        />
+        <CivilizationDossierModal state={state} onClose={() => setActiveModal(null)} onOpenWhy={handleOpenWhy} />
       )}
     </div>
   );
