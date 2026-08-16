@@ -237,10 +237,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   };
 
   const handleWheel = (e: React.WheelEvent) => {
-    // React registers wheel listeners as passive in modern browsers. The application shell
-    // already has a fixed, overflow-hidden viewport, so preventing document scroll here is
-    // unnecessary and causes a browser console error. Keep zoom behavior without calling
-    // preventDefault from the passive listener.
     if (is3DView && threeRendererRef.current) {
       threeRendererRef.current.zoom(e.deltaY);
       return;
@@ -316,6 +312,53 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    const handleCameraKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return;
+
+      const key = event.key.toLowerCase();
+      const movement = new Set(['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
+      const isZoomIn = key === '+' || key === '=';
+      const isZoomOut = key === '-' || key === '_';
+      const isFlatReset = key === 'home' && !is3DView;
+      if (!movement.has(key) && !isZoomIn && !isZoomOut && !isFlatReset) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const step = event.shiftKey ? 70 : 28;
+
+      if (is3DView && threeRendererRef.current) {
+        if (key === 'a' || key === 'arrowleft') threeRendererRef.current.rotate(-step, 0);
+        else if (key === 'd' || key === 'arrowright') threeRendererRef.current.rotate(step, 0);
+        else if (key === 'w' || key === 'arrowup') threeRendererRef.current.rotate(0, -step);
+        else if (key === 's' || key === 'arrowdown') threeRendererRef.current.rotate(0, step);
+        else if (isZoomIn) threeRendererRef.current.zoom(-160);
+        else if (isZoomOut) threeRendererRef.current.zoom(160);
+        return;
+      }
+
+      if (isFlatReset) {
+        setCamera(prev => ({ ...prev, x: 0, y: 0, zoom: 1 }));
+        return;
+      }
+
+      if (isZoomIn || isZoomOut) {
+        setCamera(prev => ({ ...prev, zoom: Math.max(0.4, Math.min(10, prev.zoom * (isZoomIn ? 1.15 : 0.87))) }));
+        return;
+      }
+
+      setCamera(prev => ({
+        ...prev,
+        x: prev.x + (key === 'a' || key === 'arrowleft' ? step : key === 'd' || key === 'arrowright' ? -step : 0),
+        y: prev.y + (key === 'w' || key === 'arrowup' ? step : key === 's' || key === 'arrowdown' ? -step : 0)
+      }));
+    };
+
+    window.addEventListener('keydown', handleCameraKey, true);
+    return () => window.removeEventListener('keydown', handleCameraKey, true);
+  }, [is3DView]);
 
   const currentHoveredTileData = hoveredTile ? grid[hoveredTile.y]?.[hoveredTile.x] : null;
 
