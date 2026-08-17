@@ -93,6 +93,7 @@ const layerLabels: Record<MapLayerMode, string> = {
 
 export const App: React.FC = () => {
   const engineRef = useRef<SimulationEngine | null>(null);
+  const simulationClockRef = useRef({ lastNow: 0, fractionalYears: 0 });
   const [state, setState] = useState<WorldState>(() => {
     const engine = new SimulationEngine(DEFAULT_CONFIG);
     engineRef.current = engine;
@@ -146,17 +147,36 @@ export const App: React.FC = () => {
   }, [isAudioMuted]);
 
   useEffect(() => {
-    if (state.isPaused) return;
+    const clock = simulationClockRef.current;
+    clock.lastNow = performance.now();
 
-    const intervalMs = Math.max(20, Math.floor(1000 / state.simulationSpeed));
-    const stepCount = state.simulationSpeed > 100 ? 5 : 1;
-    const interval = window.setInterval(() => {
-      if (!engineRef.current) return;
-      const newState = engineRef.current.step(stepCount);
-      setState({ ...newState });
-    }, intervalMs);
+    if (state.isPaused) {
+      clock.fractionalYears = 0;
+      return;
+    }
 
-    return () => window.clearInterval(interval);
+    let frameId = 0;
+    const tick = (now: number) => {
+      const engine = engineRef.current;
+      if (!engine) return;
+
+      const elapsedMs = Math.max(0, Math.min(1000, now - clock.lastNow));
+      clock.lastNow = now;
+      clock.fractionalYears += (elapsedMs * state.simulationSpeed) / 1000;
+
+      const wholeYears = Math.floor(clock.fractionalYears);
+      if (wholeYears > 0) {
+        const yearsToAdvance = Math.min(50, wholeYears);
+        clock.fractionalYears -= yearsToAdvance;
+        const newState = engine.step(yearsToAdvance);
+        setState({ ...newState });
+      }
+
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
   }, [state.isPaused, state.simulationSpeed]);
 
   useEffect(() => {
