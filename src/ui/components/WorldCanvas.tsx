@@ -178,7 +178,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           viewModeRef.current,
           activeLayerRef.current
         );
-      }, 220);
+      }, 900);
     }
   }, [state, is3DView]);
 
