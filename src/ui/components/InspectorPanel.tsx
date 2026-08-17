@@ -1,7 +1,5 @@
-// Deep Contextual Inspector Panel with Curiosity Triad (FOLLOW / WHY? / WHAT IF?)
-
 import React from 'react';
-import { X, Search, Pin, Shield, Heart, Zap, Globe, Book, Activity, AlertTriangle, ChevronRight, Dna, Landmark, Sparkles, Navigation } from 'lucide-react';
+import { Dna, Landmark, Pin, Search, Sparkles, X } from 'lucide-react';
 import { InspectionSelection, WorldState } from '../../types/simulation';
 
 interface InspectorPanelProps {
@@ -17,6 +15,13 @@ interface InspectorPanelProps {
   onOpenWhatIf?: (prompt: string) => void;
 }
 
+const stat = (label: string, value: React.ReactNode) => (
+  <div className="rounded-lg bg-white/[0.035] px-2.5 py-2">
+    <div className="text-[9px] uppercase tracking-[0.14em] text-slate-500">{label}</div>
+    <div className="mt-0.5 text-[11px] font-medium text-slate-200">{value}</div>
+  </div>
+);
+
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   selection,
   state,
@@ -31,228 +36,164 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 }) => {
   if (!selection) return null;
 
-  const { grid, species, settlements, polities, cultures, languages, ruins, myths, pathogens } = state;
+  const { grid, species, settlements, polities, cultures, ruins } = state;
   const isPinned = pinnedEntity?.id === selection.id && pinnedEntity?.type === selection.type;
 
+  const curiosityActions = (whyNodeId: string, subject: string) => (
+    <div className="grid grid-cols-3 gap-1.5">
+      <button
+        type="button"
+        onClick={() => onPinEntity(selection)}
+        className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-[10px] font-semibold transition ${isPinned ? 'bg-amber-300/14 text-amber-200 ring-1 ring-inset ring-amber-200/20' : 'bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white'}`}
+        title="Keep this subject visible while time runs"
+      >
+        <Pin size={12} />
+        {isPinned ? 'Following' : 'Follow'}
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpenWhyForNode(whyNodeId)}
+        className="flex items-center justify-center gap-1.5 rounded-xl bg-sky-300/10 px-2 py-2 text-[10px] font-semibold text-sky-200 transition hover:bg-sky-300/16"
+      >
+        <Search size={12} />
+        Why?
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpenWhatIf?.(`Change the world around ${subject}`)}
+        disabled={!onOpenWhatIf}
+        className="flex items-center justify-center gap-1.5 rounded-xl bg-violet-300/10 px-2 py-2 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-300/16 disabled:cursor-not-allowed disabled:opacity-35"
+      >
+        <Sparkles size={12} />
+        What if?
+      </button>
+    </div>
+  );
+
   return (
-    <div className="absolute top-16 right-4 w-96 max-h-[calc(100vh-140px)] bg-slate-900/95 border border-slate-700/80 backdrop-blur-xl rounded-xl shadow-2xl flex flex-col z-20 overflow-hidden text-slate-200 animate-fade-in select-none">
-      {/* Header */}
-      <div className="px-4 py-3 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800">
-            {selection.type}
-          </span>
-          <button
-            onClick={() => onPinEntity(selection)}
-            className={`p-1 rounded text-xs flex items-center gap-1 font-mono transition-all ${
-              isPinned
-                ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700'
-            }`}
-            title="Follow this subject across deep time"
-          >
-            <Pin size={12} />
-            <span>{isPinned ? 'Following' : 'Follow'}</span>
-          </button>
+    <aside
+      data-testid="inspector-panel"
+      className="absolute right-4 top-20 z-30 w-[min(360px,calc(100vw-32px))] max-h-[calc(100vh-170px)] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/78 text-slate-200 shadow-2xl backdrop-blur-2xl animate-fade-in"
+      aria-label="World inspector"
+    >
+      <div className="flex items-center justify-between border-b border-white/8 px-3.5 py-3">
+        <div>
+          <div className="text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">Inspecting</div>
+          <div className="mt-0.5 text-[11px] font-medium text-slate-300">{selection.type.toLowerCase()}</div>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-700"
-          aria-label="Close Inspector"
-        >
-          <X size={16} />
+        <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl text-slate-500 transition hover:bg-white/[0.08] hover:text-white" aria-label="Close Inspector">
+          <X size={15} />
         </button>
       </div>
 
-      {/* Body Content */}
-      <div className="p-4 overflow-y-auto space-y-4 text-xs font-sans">
-        {/* TILE SELECTION */}
+      <div className="max-h-[calc(100vh-225px)] space-y-3 overflow-y-auto p-3.5 text-xs">
         {selection.type === 'TILE' && (() => {
           const [tx, ty] = selection.id.split(',').map(Number);
           const tile = grid[ty]?.[tx];
-          if (!tile) return <div>Tile not found</div>;
+          if (!tile) return <div className="text-slate-400">Tile not found.</div>;
+          const settlement = tile.settlementId ? settlements[tile.settlementId] : null;
 
           return (
-            <div className="space-y-3">
+            <>
               <div>
-                <h3 className="text-base font-bold text-white font-serif">{tile.biome.replace('_', ' ')}</h3>
-                <p className="text-slate-400 font-mono text-[11px]">Coordinates: ({tile.x}, {tile.y}) | Plate #{tile.plateId}</p>
+                <h2 className="font-serif text-lg font-semibold text-white">{tile.biome.replaceAll('_', ' ')}</h2>
+                <div className="mt-1 text-[10px] text-slate-500">{tile.x}, {tile.y} · plate {tile.plateId}</div>
               </div>
-
-              <div className="grid grid-cols-2 gap-2 bg-slate-800/50 p-2.5 rounded-lg border border-slate-700/50 font-mono">
-                <div>Elevation: <span className="text-white font-semibold">{Math.round(tile.elevation * 1000)}m</span></div>
-                <div>Temp: <span className="text-white font-semibold">{tile.currentTemp}°C</span></div>
-                <div>Rainfall: <span className="text-white font-semibold">{Math.round(tile.rainfall * 100)}%</span></div>
-                <div>Biomass: <span className="text-emerald-400 font-semibold">{tile.biomass}</span></div>
-                <div>Capacity: <span className="text-amber-400 font-semibold">{tile.carryingCapacity}</span></div>
-                <div>Pop Density: <span className="text-amber-400 font-semibold">{tile.populationDensity}</span></div>
+              {curiosityActions(`cause_tile_${selection.id}`, `tile ${selection.id}`)}
+              <div className="grid grid-cols-3 gap-1.5">
+                {stat('Elevation', `${Math.round(tile.elevation * 1000)} m`)}
+                {stat('Temperature', `${tile.currentTemp} °C`)}
+                {stat('Rainfall', `${Math.round(tile.rainfall * 100)}%`)}
               </div>
-
-              {/* Ruins on this tile */}
-              {tile.ruins.length > 0 && (
-                <div className="space-y-1">
-                  <h4 className="font-semibold text-purple-300">Archaeological Ruins</h4>
-                  {tile.ruins.map(r => (
-                    <button
-                      key={r.id}
-                      onClick={() => onSelectEntity({ type: 'RUIN', id: r.id })}
-                      className="w-full text-left p-2 bg-purple-950/40 border border-purple-800/60 rounded-lg hover:bg-purple-900/40 flex items-center justify-between"
-                    >
-                      <div>
-                        <div className="font-medium text-purple-200">{r.originalName}</div>
-                        <div className="text-[10px] text-purple-400">Collapsed Year {r.collapsedYear}</div>
-                      </div>
-                      <ChevronRight size={14} className="text-purple-400" />
-                    </button>
-                  ))}
-                </div>
+              {settlement && (
+                <button type="button" onClick={() => onSelectEntity({ type: 'SETTLEMENT', id: settlement.id })} className="w-full rounded-xl border border-amber-200/10 bg-amber-300/[0.05] px-3 py-2.5 text-left transition hover:bg-amber-300/[0.09]">
+                  <div className="text-[9px] uppercase tracking-[0.16em] text-amber-400/70">Settlement here</div>
+                  <div className="mt-0.5 font-medium text-amber-100">{settlement.name}</div>
+                </button>
               )}
-            </div>
+              {tile.ruins.length > 0 && (
+                <button type="button" onClick={() => onSelectEntity({ type: 'RUIN', id: tile.ruins[0].id })} className="w-full rounded-xl border border-violet-200/10 bg-violet-300/[0.05] px-3 py-2.5 text-left transition hover:bg-violet-300/[0.09]">
+                  <div className="text-[9px] uppercase tracking-[0.16em] text-violet-400/70">Archaeology</div>
+                  <div className="mt-0.5 font-medium text-violet-100">Ruins of {tile.ruins[0].originalName}</div>
+                </button>
+              )}
+            </>
           );
         })()}
 
-        {/* SPECIES SELECTION */}
         {selection.type === 'SPECIES' && (() => {
           const s = species[selection.id];
-          if (!s) return <div>Species not found</div>;
-
+          if (!s) return <div className="text-slate-400">Species not found.</div>;
           return (
-            <div className="space-y-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">{s.iconSymbol}</span>
-                  <div>
-                    <h3 className="text-base font-bold text-white font-serif">{s.commonName}</h3>
-                    <p className="text-slate-400 italic text-[11px] font-mono">{s.scientificName}</p>
-                  </div>
-                </div>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
-                    {s.trophicLevel}
-                  </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-blue-300 border border-blue-800">
-                    {s.morphology.replace('_', ' ')}
-                  </span>
-                  {s.isSapient && (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-950 text-purple-300 border border-purple-800 font-bold">
-                      🧠 SAPIENT
-                    </span>
-                  )}
+            <>
+              <div className="flex items-center gap-3">
+                <div className="text-3xl" aria-hidden="true">{s.iconSymbol}</div>
+                <div className="min-w-0">
+                  <h2 className="truncate font-serif text-lg font-semibold text-white">{s.commonName}</h2>
+                  <div className="truncate text-[10px] italic text-slate-500">{s.scientificName}</div>
                 </div>
               </div>
-
-              {/* Curiosity Triad Action Buttons */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => onOpenWhyForNode(s.causalNodeId)}
-                  className="py-2 px-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-                >
-                  <Search size={13} />
-                  <span>WHY?</span>
+              {curiosityActions(s.causalNodeId, s.commonName)}
+              <div className="grid grid-cols-3 gap-1.5">
+                {stat('Population', s.totalPopulation.toLocaleString())}
+                {stat('Cognition', `${s.genome.cognition}/100`)}
+                {stat('Body', `${s.genome.bodySizeMeters} m`)}
+              </div>
+              {onOpenFieldGuide && (
+                <button type="button" onClick={onOpenFieldGuide} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-300/[0.07] px-3 py-2.5 text-[10px] font-semibold text-emerald-200 transition hover:bg-emerald-300/[0.12]">
+                  <Dna size={13} /> View morphology & lineage
                 </button>
-                {onOpenFieldGuide && (
-                  <button
-                    onClick={onOpenFieldGuide}
-                    className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <Dna size={13} />
-                    <span>3D Field Guide</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Genome & Traits */}
-              <div className="space-y-2">
-                <h4 className="font-semibold text-slate-300">Genome & Anatomy</h4>
-                <div className="grid grid-cols-2 gap-2 bg-slate-800/50 p-2.5 rounded-lg border border-slate-700/50 font-mono text-[11px]">
-                  <div>Size: <span className="text-white">{s.genome.bodySizeMeters}m</span></div>
-                  <div>Speed: <span className="text-white">{s.genome.speedKmh} km/h</span></div>
-                  <div>Lifespan: <span className="text-white">{s.genome.lifespanYears}y</span></div>
-                  <div>Cognition: <span className="text-purple-300 font-bold">{s.genome.cognition}/100</span></div>
-                  <div>Locomotion: <span className="text-white">{s.genome.locomotion}</span></div>
-                  <div>Sensory: <span className="text-white">{s.genome.sensoryModality}</span></div>
-                </div>
-              </div>
-
-              <div className="bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/40 flex justify-between">
-                <span className="text-slate-400">Total Population:</span>
-                <span className="font-mono text-emerald-400 font-bold">{s.totalPopulation.toLocaleString()}</span>
-              </div>
-            </div>
+              )}
+            </>
           );
         })()}
 
-        {/* SETTLEMENT SELECTION */}
         {selection.type === 'SETTLEMENT' && (() => {
-          const sett = settlements[selection.id];
-          if (!sett) return <div>Settlement not found</div>;
-          const cult = cultures[sett.cultureId];
-          const pol = polities[sett.polityId];
-
+          const settlement = settlements[selection.id];
+          if (!settlement) return <div className="text-slate-400">Settlement not found.</div>;
+          const culture = cultures[settlement.cultureId];
+          const polity = polities[settlement.polityId];
           return (
-            <div className="space-y-3">
+            <>
               <div>
-                <h3 className="text-base font-bold text-white font-serif">{sett.name}</h3>
-                <p className="text-amber-400 font-mono text-[11px]">Tier: {sett.tier} | Founded Year {sett.foundedYear}</p>
+                <h2 className="font-serif text-lg font-semibold text-white">{settlement.name}</h2>
+                <div className="mt-1 text-[10px] text-amber-300/70">{settlement.tier} · founded {settlement.foundedYear.toLocaleString()}</div>
               </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => onOpenWhyForNode(sett.causalNodeId)}
-                  className="py-2 px-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-                >
-                  <Search size={13} />
-                  <span>WHY HERE?</span>
+              {curiosityActions(settlement.causalNodeId, settlement.name)}
+              <div className="grid grid-cols-3 gap-1.5">
+                {stat('Population', settlement.population.toLocaleString())}
+                {stat('Food', `${settlement.foodSupplyDays} days`)}
+                {stat('Culture', culture?.name || '—')}
+              </div>
+              {polity && <div className="rounded-xl bg-white/[0.035] px-3 py-2.5 text-[11px] text-slate-400">Part of <span className="font-medium text-sky-200">{polity.name}</span></div>}
+              {onOpenCivilizationDossier && (
+                <button type="button" onClick={onOpenCivilizationDossier} className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-300/[0.07] px-3 py-2.5 text-[10px] font-semibold text-amber-200 transition hover:bg-amber-300/[0.12]">
+                  <Landmark size={13} /> Open civilization dossier
                 </button>
-                {onOpenCivilizationDossier && (
-                  <button
-                    onClick={onOpenCivilizationDossier}
-                    className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <Landmark size={13} />
-                    <span>3D Dossier</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 bg-slate-800/50 p-2.5 rounded-lg border border-slate-700/50 font-mono">
-                <div>Population: <span className="text-white font-bold">{sett.population.toLocaleString()}</span></div>
-                <div>Food Reserve: <span className="text-emerald-400">{sett.foodSupplyDays} days</span></div>
-                {cult && <div className="col-span-2">Culture: <span className="text-amber-300 font-sans">{cult.name}</span></div>}
-                {pol && <div className="col-span-2">Polity: <span className="text-sky-300 font-sans">{pol.name}</span></div>}
-              </div>
-            </div>
+              )}
+            </>
           );
         })()}
 
-        {/* RUIN SELECTION */}
         {selection.type === 'RUIN' && (() => {
-          const r = ruins[selection.id];
-          if (!r) return <div>Ruin not found</div>;
-
+          const ruin = ruins[selection.id];
+          if (!ruin) return <div className="text-slate-400">Ruin not found.</div>;
           return (
-            <div className="space-y-3">
+            <>
               <div>
-                <h3 className="text-base font-bold text-purple-300 font-serif">Ruins of {r.originalName}</h3>
-                <p className="text-slate-400 font-mono text-[11px]">Active: Year {r.foundedYear} — {r.collapsedYear}</p>
+                <div className="text-[9px] font-semibold uppercase tracking-[0.18em] text-violet-400/70">Persistent history</div>
+                <h2 className="mt-1 font-serif text-lg font-semibold text-white">Ruins of {ruin.originalName}</h2>
+                <div className="mt-1 text-[10px] text-slate-500">{ruin.foundedYear.toLocaleString()} — {ruin.collapsedYear.toLocaleString()}</div>
               </div>
-
-              <button
-                onClick={() => onOpenWhyForNode(r.id)}
-                className="w-full py-2 px-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-              >
-                <Search size={13} />
-                <span>WHY DID THIS COLLAPSE?</span>
-              </button>
-
-              <div className="bg-red-950/30 p-2.5 rounded-lg border border-red-800/40 text-[11px]">
-                <span className="font-semibold text-red-300">Collapse Cause:</span>
-                <p className="text-slate-300 mt-0.5">{r.collapseCause}</p>
+              {curiosityActions(ruin.id, ruin.originalName)}
+              <div className="rounded-xl border border-rose-300/10 bg-rose-300/[0.04] px-3 py-2.5">
+                <div className="text-[9px] uppercase tracking-[0.16em] text-rose-300/70">Collapse</div>
+                <div className="mt-1 text-[11px] leading-relaxed text-slate-300">{ruin.collapseCause}</div>
               </div>
-            </div>
+            </>
           );
         })()}
       </div>
-    </div>
+    </aside>
   );
 };
