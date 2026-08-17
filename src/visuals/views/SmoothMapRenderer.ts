@@ -1,4 +1,4 @@
-import { WorldState, Tile, WorldViewMode } from '../../types/simulation';
+import { Tile, WorldState, WorldViewMode } from '../../types/simulation';
 import { Camera3D } from './projections';
 
 const BIOME_COLORS: Record<string, string> = {
@@ -22,16 +22,17 @@ const BIOME_COLORS: Record<string, string> = {
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 
 export class SmoothMapRenderer {
-  private static cachedState: WorldState | null = null;
+  private static cachedKey = '';
   private static cachedSurface: HTMLCanvasElement | null = null;
 
   private static tileColor(tile: Tile): string {
-    const base = BIOME_COLORS[tile.biome] || '#4d6849';
-    const color = document.createElement('canvas').getContext('2d');
-    // Canvas color parsing is more expensive than simple HSL composition here, so use
-    // biome hue plus bounded physical shading through an overlay in buildSurface().
-    void color;
-    return base;
+    return BIOME_COLORS[tile.biome] || '#4d6849';
+  }
+
+  private static cacheKey(state: WorldState) {
+    // Terrain changes slowly relative to simulation ticks. Rebuild the expensive base
+    // cartography only every ten simulated years; settlements/ruins are drawn live.
+    return `${state.config.seed}:${state.config.width}x${state.config.height}:${Math.floor(state.currentYear / 10)}`;
   }
 
   private static buildSurface(state: WorldState): HTMLCanvasElement {
@@ -50,7 +51,7 @@ export class SmoothMapRenderer {
       }
     }
 
-    const scale = 18;
+    const scale = 8;
     const surface = document.createElement('canvas');
     surface.width = width * scale;
     surface.height = height * scale;
@@ -64,31 +65,27 @@ export class SmoothMapRenderer {
     const sx = surface.width / width;
     const sy = surface.height / height;
 
-    // Broad physical shading and a restrained paper-like terrain texture.
     ctx.save();
     ctx.globalCompositeOperation = 'soft-light';
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const tile = state.grid[y][x];
-        const px = x * sx;
-        const py = y * sy;
         const elevation = clamp((tile.elevation + 0.35) / 1.35);
         const moisture = clamp(tile.rainfall);
         const lightness = tile.isWater
-          ? 0.04 + (1 - clamp(tile.waterDepth)) * 0.06
-          : (elevation - 0.45) * 0.18 + (moisture - 0.5) * 0.035;
+          ? 0.035 + (1 - clamp(tile.waterDepth)) * 0.055
+          : (elevation - 0.45) * 0.16 + (moisture - 0.5) * 0.03;
         ctx.fillStyle = lightness >= 0
-          ? `rgba(255,255,255,${Math.min(0.12, lightness)})`
-          : `rgba(0,0,0,${Math.min(0.14, Math.abs(lightness))})`;
-        ctx.fillRect(px, py, sx + 1, sy + 1);
+          ? `rgba(255,255,255,${Math.min(0.1, lightness)})`
+          : `rgba(0,0,0,${Math.min(0.12, Math.abs(lightness))})`;
+        ctx.fillRect(x * sx, y * sy, sx + 1, sy + 1);
       }
     }
     ctx.restore();
 
-    // Coastlines are meaningful geography, not tile borders.
     ctx.save();
-    ctx.strokeStyle = 'rgba(206, 231, 221, 0.24)';
-    ctx.lineWidth = Math.max(1, scale * 0.055);
+    ctx.strokeStyle = 'rgba(206, 231, 221, 0.22)';
+    ctx.lineWidth = 0.8;
     ctx.lineJoin = 'round';
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -104,9 +101,8 @@ export class SmoothMapRenderer {
     }
     ctx.restore();
 
-    // Rivers are intentionally thin so they read as geography rather than UI marks.
     ctx.save();
-    ctx.strokeStyle = 'rgba(91, 196, 222, 0.72)';
+    ctx.strokeStyle = 'rgba(91, 196, 222, 0.68)';
     ctx.lineCap = 'round';
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -114,7 +110,7 @@ export class SmoothMapRenderer {
         if (tile.isWater || tile.riverFlow <= 0.1) continue;
         const cx = (x + 0.5) * sx;
         const cy = (y + 0.5) * sy;
-        ctx.lineWidth = Math.max(0.8, scale * (0.025 + tile.riverFlow * 0.035));
+        ctx.lineWidth = Math.max(0.65, 0.55 + tile.riverFlow * 0.55);
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         ctx.lineTo(
@@ -130,8 +126,9 @@ export class SmoothMapRenderer {
   }
 
   private static surface(state: WorldState) {
-    if (this.cachedState !== state || !this.cachedSurface) {
-      this.cachedState = state;
+    const key = this.cacheKey(state);
+    if (key !== this.cachedKey || !this.cachedSurface) {
+      this.cachedKey = key;
       this.cachedSurface = this.buildSurface(state);
     }
     return this.cachedSurface;
@@ -164,15 +161,15 @@ export class SmoothMapRenderer {
     if (viewMode === 'SQUARE_TILE') {
       ctx.save();
       ctx.shadowColor = 'rgba(0,0,0,0.72)';
-      ctx.shadowBlur = 42;
-      ctx.shadowOffsetY = 18;
+      ctx.shadowBlur = 36;
+      ctx.shadowOffsetY = 16;
       ctx.fillStyle = '#11181c';
       ctx.beginPath();
       ctx.roundRect(originX - boardPadding, originY - boardPadding, mapWidth + boardPadding * 2, mapHeight + boardPadding * 2, 20);
       ctx.fill();
       ctx.restore();
 
-      ctx.strokeStyle = 'rgba(210, 190, 144, 0.18)';
+      ctx.strokeStyle = 'rgba(210, 190, 144, 0.16)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.roundRect(originX - boardPadding, originY - boardPadding, mapWidth + boardPadding * 2, mapHeight + boardPadding * 2, 20);
@@ -190,14 +187,13 @@ export class SmoothMapRenderer {
     ctx.drawImage(this.surface(state), originX, originY, mapWidth, mapHeight);
 
     const edgeShade = ctx.createLinearGradient(originX, originY, originX, originY + mapHeight);
-    edgeShade.addColorStop(0, 'rgba(255,255,255,0.035)');
+    edgeShade.addColorStop(0, 'rgba(255,255,255,0.03)');
     edgeShade.addColorStop(0.5, 'rgba(255,255,255,0)');
     edgeShade.addColorStop(1, 'rgba(0,0,0,0.08)');
     ctx.fillStyle = edgeShade;
     ctx.fillRect(originX, originY, mapWidth, mapHeight);
     ctx.restore();
 
-    // Civilization and archaeology appear as restrained physical marks.
     for (const settlement of Object.values(state.settlements)) {
       const x = originX + (settlement.tileX + 0.5) * tileSize;
       const y = originY + (settlement.tileY + 0.5) * tileSize;
