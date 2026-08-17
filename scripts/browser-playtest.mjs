@@ -35,6 +35,16 @@ const readYear = async () => {
   return Number(match[1].replaceAll(',', ''));
 };
 
+const waitForYear = async (expectedYear, timeoutMs = 15_000) => {
+  const deadline = Date.now() + timeoutMs;
+  let lastYear = await readYear();
+  while (lastYear !== expectedYear && Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    lastYear = await readYear();
+  }
+  return lastYear;
+};
+
 try {
   await page.goto(baseURL, { waitUntil: 'networkidle', timeout: 45_000 });
   await page.getByText('WORLDSEED', { exact: true }).first().waitFor({ state: 'visible', timeout: 15_000 });
@@ -146,8 +156,8 @@ try {
   await page.getByTestId('world-tools-button').click();
   await page.getByTestId('world-tools-panel').getByTitle('Local Saves & World Export/Import').click();
   await page.getByRole('button', { name: 'Load' }).first().click();
-  await page.waitForTimeout(200);
-  const restoredYear = await readYear();
+  await page.getByLabel('Close Saves').waitFor({ state: 'hidden', timeout: 15_000 });
+  const restoredYear = await waitForYear(savedYear, 15_000);
   if (restoredYear !== savedYear) fail(`Save/load round trip restored year ${restoredYear}, expected ${savedYear}.`);
 
   const cycle = ['GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW', 'SNOW_GLOBE', 'FLAT_ATLAS', 'SQUARE_TILE'];
