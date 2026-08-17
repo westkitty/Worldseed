@@ -1,11 +1,14 @@
-// WORLDSEED — Master Simulation Application with Megaloop Multi-View, Immersion Mode & 3D Tools
-
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Layers, Search, Volume2, VolumeX, Sparkles,
-  Settings, Globe, Dna, Landmark, GitCompare
+  Globe,
+  Layers,
+  Search,
+  Settings,
+  Sparkles,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
-import { WorldConfig, WorldState, InspectionSelection, WorldViewMode } from './types/simulation';
+import { InspectionSelection, WorldConfig, WorldState, WorldViewMode } from './types/simulation';
 import { SimulationEngine } from './simulation/engine';
 import { snapshotEngineRuntime, restoreEngineRuntime } from './persistence/runtimeSnapshot';
 import { soundscape } from './audio/soundscape';
@@ -46,6 +49,48 @@ const DEFAULT_CONFIG: WorldConfig = {
   sapienceLikelihood: 1.0
 };
 
+type ModalKey =
+  | 'WHY'
+  | 'TREE_OF_LIFE'
+  | 'CHRONICLE'
+  | 'LANGUAGES'
+  | 'WORLD_LAB'
+  | 'BRANCH'
+  | 'DISCOVERIES'
+  | 'STATS'
+  | 'SAVE_LOAD'
+  | 'HOTKEYS'
+  | 'SETTINGS'
+  | 'NEW_WORLD_WIZARD'
+  | 'COMMAND_PALETTE'
+  | 'TWIN_WORLDS'
+  | 'FIELD_GUIDE'
+  | 'CIVILIZATION_DOSSIER';
+
+const viewLabels: Record<WorldViewMode, string> = {
+  FLAT_ATLAS: 'Atlas',
+  SQUARE_TILE: 'World Table',
+  GLOBE: 'Globe',
+  SNOW_GLOBE: 'Snow Globe',
+  RELIEF_DIORAMA: 'Relief',
+  ORBITAL_VIEW: 'Orbit'
+};
+
+const layerLabels: Record<MapLayerMode, string> = {
+  PHYSICAL: 'Physical',
+  BIOMES: 'Biomes',
+  TEMPERATURE: 'Temperature',
+  RAINFALL: 'Rainfall',
+  BIODIVERSITY: 'Biodiversity',
+  POLITICAL: 'Polities',
+  SETTLEMENTS: 'Settlements',
+  CULTURES: 'Cultures',
+  LANGUAGES: 'Languages',
+  DISEASES: 'Disease',
+  RUINS_ARCHAEOLOGY: 'Archaeology',
+  ENVIRONMENTAL_SCARS: 'Scars'
+};
+
 export const App: React.FC = () => {
   const engineRef = useRef<SimulationEngine | null>(null);
   const [state, setState] = useState<WorldState>(() => {
@@ -55,45 +100,16 @@ export const App: React.FC = () => {
   });
 
   const [activeLayer, setActiveLayer] = useState<MapLayerMode>('PHYSICAL');
-  const [viewMode, setViewMode] = useState<WorldViewMode>('FLAT_ATLAS');
+  const [viewMode, setViewMode] = useState<WorldViewMode>('GLOBE');
   const [selectedEntity, setSelectedEntity] = useState<InspectionSelection | null>(null);
   const [pinnedEntity, setPinnedEntity] = useState<InspectionSelection | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const [isImmersionMode, setIsImmersionMode] = useState(false);
-
-  const [activeModal, setActiveModal] = useState<
-    | 'WHY'
-    | 'TREE_OF_LIFE'
-    | 'CHRONICLE'
-    | 'LANGUAGES'
-    | 'WORLD_LAB'
-    | 'BRANCH'
-    | 'DISCOVERIES'
-    | 'STATS'
-    | 'SAVE_LOAD'
-    | 'HOTKEYS'
-    | 'SETTINGS'
-    | 'NEW_WORLD_WIZARD'
-    | 'COMMAND_PALETTE'
-    | 'TWIN_WORLDS'
-    | 'FIELD_GUIDE'
-    | 'CIVILIZATION_DOSSIER'
-    | null
-  >(null);
+  const [activeModal, setActiveModal] = useState<ModalKey | null>(null);
   const [whyNodeId, setWhyNodeId] = useState<string | null>(null);
-
-  const ensureAudio = useCallback(() => {
-    soundscape.init();
-    soundscape.resume();
-  }, []);
-
-  const toggleAudio = () => {
-    ensureAudio();
-    const newMuted = !isAudioMuted;
-    setIsAudioMuted(newMuted);
-    soundscape.setMuted(newMuted);
-  };
 
   const handleStepYears = useCallback((years: number) => {
     if (!engineRef.current) return;
@@ -101,17 +117,14 @@ export const App: React.FC = () => {
     setState({ ...newState });
   }, []);
 
-  // SimulationEngine owns the authoritative world state. Keep runtime controls synchronized
-  // so an engine tick cannot silently restore stale React-only values.
   const handleTogglePlay = useCallback(() => {
-    ensureAudio();
     setState(prev => {
       const nextPaused = !prev.isPaused;
       const engineState = engineRef.current?.getState();
       if (engineState) engineState.isPaused = nextPaused;
       return { ...prev, isPaused: nextPaused };
     });
-  }, [ensureAudio]);
+  }, []);
 
   const handleSetSpeed = useCallback((speed: number) => {
     const safeSpeed = Math.max(1, Math.min(1000, speed));
@@ -122,12 +135,21 @@ export const App: React.FC = () => {
     });
   }, []);
 
+  const toggleAudio = useCallback(() => {
+    const nextMuted = !isAudioMuted;
+    if (!nextMuted) {
+      soundscape.init();
+      soundscape.resume();
+    }
+    soundscape.setMuted(nextMuted);
+    setIsAudioMuted(nextMuted);
+  }, [isAudioMuted]);
+
   useEffect(() => {
     if (state.isPaused) return;
 
     const intervalMs = Math.max(20, Math.floor(1000 / state.simulationSpeed));
     const stepCount = state.simulationSpeed > 100 ? 5 : 1;
-
     const interval = window.setInterval(() => {
       if (!engineRef.current) return;
       const newState = engineRef.current.step(stepCount);
@@ -139,11 +161,22 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
+      ) return;
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setActiveModal(prev => (prev === 'COMMAND_PALETTE' ? null : 'COMMAND_PALETTE'));
+        return;
+      }
+
+      if (e.key === '/') {
+        e.preventDefault();
+        setSearchOpen(true);
         return;
       }
 
@@ -163,13 +196,13 @@ export const App: React.FC = () => {
       else if (e.key === '5') handleSetSpeed(1000);
       else if (e.key === 'Escape') {
         setActiveModal(null);
+        setSearchOpen(false);
+        setToolsOpen(false);
         setSelectedEntity(null);
       } else if (e.key.toLowerCase() === 't') setActiveModal('TREE_OF_LIFE');
       else if (e.key.toLowerCase() === 'c') setActiveModal('CHRONICLE');
-      else if (e.key.toLowerCase() === 'w') setActiveModal('WORLD_LAB');
-      else if (e.key.toLowerCase() === 'd') setActiveModal('DISCOVERIES');
       else if (e.key.toLowerCase() === 'v') {
-        const modes: WorldViewMode[] = ['FLAT_ATLAS', 'SQUARE_TILE', 'GLOBE', 'SNOW_GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW'];
+        const modes: WorldViewMode[] = ['GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW', 'SNOW_GLOBE', 'FLAT_ATLAS', 'SQUARE_TILE'];
         const nextIdx = (modes.indexOf(viewMode) + 1) % modes.length;
         setViewMode(modes[nextIdx]);
       } else if (e.key === '?') setActiveModal('HOTKEYS');
@@ -190,13 +223,15 @@ export const App: React.FC = () => {
     if (foundSpecies) {
       setSelectedEntity({ type: 'SPECIES', id: foundSpecies.id });
       setSearchQuery('');
+      setSearchOpen(false);
       return;
     }
 
-    const foundSett = Object.values(state.settlements).find(s => s.name.toLowerCase().includes(q));
-    if (foundSett) {
-      setSelectedEntity({ type: 'SETTLEMENT', id: foundSett.id });
+    const foundSettlement = Object.values(state.settlements).find(s => s.name.toLowerCase().includes(q));
+    if (foundSettlement) {
+      setSelectedEntity({ type: 'SETTLEMENT', id: foundSettlement.id });
       setSearchQuery('');
+      setSearchOpen(false);
       return;
     }
 
@@ -204,6 +239,7 @@ export const App: React.FC = () => {
     if (foundRuin) {
       setSelectedEntity({ type: 'RUIN', id: foundRuin.id });
       setSearchQuery('');
+      setSearchOpen(false);
     }
   };
 
@@ -213,6 +249,8 @@ export const App: React.FC = () => {
     setSelectedEntity(null);
     setPinnedEntity(null);
     setActiveModal(null);
+    setToolsOpen(false);
+    setSearchOpen(false);
     setState(newEngine.getState());
   };
 
@@ -242,150 +280,17 @@ export const App: React.FC = () => {
     else if (action === 'SELECT_ENTITY') setSelectedEntity(payload);
   };
 
+  const openTool = (modal: ModalKey) => {
+    setToolsOpen(false);
+    setActiveModal(modal);
+  };
+
   const persistableState = snapshotEngineRuntime(engineRef.current, state);
+  const currentEra = state.eras.length > 0 ? state.eras[state.eras.length - 1] : null;
 
   return (
-    <div className="flex flex-col w-screen h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none">
-      {!isImmersionMode && (
-        <header className="h-14 bg-slate-900/90 border-b border-slate-800 backdrop-blur-md px-4 flex items-center justify-between z-30 shadow-md">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
-                className="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-600 via-indigo-600 to-emerald-500 flex items-center justify-center font-serif font-black text-white text-base shadow-lg shadow-sky-950 hover:scale-105 transition-all"
-                title="Open Planet Genesis Wizard"
-              >
-                W
-              </button>
-              <div>
-                <h1 className="font-serif font-black tracking-wider text-sm text-white flex items-center gap-1.5">
-                  <span>WORLDSEED</span>
-                  <span className="text-[10px] font-mono font-normal text-sky-400 bg-sky-950 px-1.5 rounded border border-sky-800">
-                    {state.config.genre || 'REALISTIC'}
-                  </span>
-                </h1>
-                <div className="text-[10px] font-mono text-slate-400">
-                  Seed: <span className="text-amber-400">{state.config.seed}</span> | Topology: <span className="text-sky-300">{state.config.topology || 'SPHERICAL'}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <form onSubmit={handleSearchSubmit} className="relative w-64 max-w-xs hidden md:block">
-              <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search species, cities, ruins..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-800/90 border border-slate-700 rounded-lg pl-8 pr-12 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 font-sans"
-              />
-              <kbd
-                onClick={() => setActiveModal('COMMAND_PALETTE')}
-                className="absolute right-2 top-2 px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[9px] font-mono text-slate-400 cursor-pointer hover:text-white"
-              >
-                ⌘K
-              </kbd>
-            </form>
-
-            <button
-              onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
-              className="px-2.5 py-1 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow"
-            >
-              <Sparkles size={13} />
-              <span className="hidden sm:inline">New World</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700 text-xs font-mono">
-              <Globe size={14} className="text-amber-400" />
-              <select
-                value={viewMode}
-                onChange={e => setViewMode(e.target.value as WorldViewMode)}
-                className="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer"
-              >
-                <option value="FLAT_ATLAS" className="bg-slate-900 text-white">Flat Atlas (2D)</option>
-                <option value="SQUARE_TILE" className="bg-slate-900 text-white">Square Board (Slab)</option>
-                <option value="GLOBE" className="bg-slate-900 text-white">3D Globe</option>
-                <option value="SNOW_GLOBE" className="bg-slate-900 text-white">Snow Globe Diorama</option>
-                <option value="RELIEF_DIORAMA" className="bg-slate-900 text-white">Relief Terrain Slab</option>
-                <option value="ORBITAL_VIEW" className="bg-slate-900 text-white">Orbital Cosmos</option>
-              </select>
-            </div>
-
-            <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700 text-xs font-mono">
-              <Layers size={14} className="text-sky-400" />
-              <select
-                value={activeLayer}
-                onChange={e => setActiveLayer(e.target.value as MapLayerMode)}
-                className="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer"
-              >
-                <option value="PHYSICAL" className="bg-slate-900 text-white">Physical Relief</option>
-                <option value="BIOMES" className="bg-slate-900 text-white">Whittaker Biomes</option>
-                <option value="TEMPERATURE" className="bg-slate-900 text-white">Temperature Thermal</option>
-                <option value="RAINFALL" className="bg-slate-900 text-white">Rainfall & Moisture</option>
-                <option value="BIODIVERSITY" className="bg-slate-900 text-white">Species Biodiversity</option>
-                <option value="POLITICAL" className="bg-slate-900 text-white">Polity Territories</option>
-                <option value="SETTLEMENTS" className="bg-slate-900 text-white">Cities & Roads</option>
-                <option value="CULTURES" className="bg-slate-900 text-white">Cultural Footprints</option>
-                <option value="LANGUAGES" className="bg-slate-900 text-white">Language Families</option>
-                <option value="DISEASES" className="bg-slate-900 text-white">Contagion Vectors</option>
-                <option value="RUINS_ARCHAEOLOGY" className="bg-slate-900 text-white">Ruins & Fossils</option>
-                <option value="ENVIRONMENTAL_SCARS" className="bg-slate-900 text-white">Environmental Scars</option>
-              </select>
-            </div>
-
-            <button
-              onClick={() => setActiveModal('FIELD_GUIDE')}
-              className="p-2 bg-slate-800 border border-slate-700 text-emerald-400 hover:text-white rounded-lg"
-              title="3D Biological Field Guide"
-            >
-              <Dna size={16} />
-            </button>
-
-            <button
-              onClick={() => setActiveModal('CIVILIZATION_DOSSIER')}
-              className="p-2 bg-slate-800 border border-slate-700 text-amber-400 hover:text-white rounded-lg"
-              title="Civilization Dossier & 3D Architecture"
-            >
-              <Landmark size={16} />
-            </button>
-
-            <button
-              onClick={() => setActiveModal('TWIN_WORLDS')}
-              className="p-2 bg-slate-800 border border-slate-700 text-indigo-400 hover:text-white rounded-lg"
-              title="Twin-Worlds Counterfactuals"
-            >
-              <GitCompare size={16} />
-            </button>
-
-            <button
-              onClick={() => setActiveModal('SETTINGS')}
-              className="p-2 bg-slate-800 border border-slate-700 text-slate-400 hover:text-white rounded-lg"
-              title="Settings Hub"
-            >
-              <Settings size={16} />
-            </button>
-
-            <button
-              onClick={toggleAudio}
-              className={`p-2 rounded-lg border transition-all ${
-                isAudioMuted
-                  ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-                  : 'bg-indigo-950 border-indigo-700 text-indigo-300 shadow-md shadow-indigo-950'
-              }`}
-              title={isAudioMuted ? 'Unmute Ambient Soundscape' : 'Mute Soundscape'}
-              aria-label="Soundscape Audio"
-            >
-              {isAudioMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-            </button>
-          </div>
-        </header>
-      )}
-
-      <main className="flex-1 relative w-full h-full overflow-hidden">
+    <div className="relative w-screen h-screen overflow-hidden bg-[#02060b] text-slate-100 font-sans select-none">
+      <main className="absolute inset-0" aria-label="WORLDSEED simulation surface">
         <WorldCanvas
           state={state}
           activeLayer={activeLayer}
@@ -396,12 +301,181 @@ export const App: React.FC = () => {
           onUnpinEntity={() => setPinnedEntity(null)}
           onOpenWhy={handleOpenWhy}
         />
+      </main>
 
-        {isImmersionMode && (
-          <ImmersionOverlay state={state} onExitImmersion={() => setIsImmersionMode(false)} onTogglePlay={handleTogglePlay} />
-        )}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_45%,rgba(2,6,23,0.42)_100%)]" />
 
-        {!isImmersionMode && (
+      {isImmersionMode ? (
+        <ImmersionOverlay state={state} onExitImmersion={() => setIsImmersionMode(false)} onTogglePlay={handleTogglePlay} />
+      ) : (
+        <>
+          <div data-testid="world-hud" className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-4 p-4">
+            <button
+              type="button"
+              onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
+              className="pointer-events-auto group rounded-2xl border border-white/10 bg-slate-950/55 px-3.5 py-2.5 text-left shadow-2xl backdrop-blur-xl transition hover:bg-slate-950/75"
+              title="Create a new world"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10 font-serif text-sm font-black text-white transition group-hover:bg-white/15">W</span>
+                <span>
+                  <span className="block text-[11px] font-semibold tracking-[0.22em] text-slate-100">WORLDSEED</span>
+                  <span className="mt-0.5 block text-[10px] text-slate-400">
+                    {state.config.genre} · seed {state.config.seed}
+                  </span>
+                </span>
+              </div>
+            </button>
+
+            <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/55 p-1.5 shadow-2xl backdrop-blur-xl">
+              <label className="flex items-center gap-1.5 rounded-xl px-2 py-1 text-[11px] text-slate-300" title="World presentation">
+                <Globe size={14} className="text-sky-300" />
+                <select
+                  data-testid="view-select"
+                  value={viewMode}
+                  onChange={e => setViewMode(e.target.value as WorldViewMode)}
+                  className="max-w-[112px] cursor-pointer bg-transparent py-1 text-[11px] font-medium text-slate-100 outline-none"
+                  aria-label="World view"
+                >
+                  {Object.entries(viewLabels).map(([value, label]) => (
+                    <option key={value} value={value} className="bg-slate-950 text-white">{label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <span className="h-5 w-px bg-white/10" />
+
+              <label className="flex items-center gap-1.5 rounded-xl px-2 py-1 text-[11px] text-slate-300" title="Observation layer">
+                <Layers size={14} className="text-emerald-300" />
+                <select
+                  data-testid="layer-select"
+                  value={activeLayer}
+                  onChange={e => setActiveLayer(e.target.value as MapLayerMode)}
+                  className="max-w-[118px] cursor-pointer bg-transparent py-1 text-[11px] font-medium text-slate-100 outline-none"
+                  aria-label="Observation layer"
+                >
+                  {Object.entries(layerLabels).map(([value, label]) => (
+                    <option key={value} value={value} className="bg-slate-950 text-white">{label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setSearchOpen(prev => !prev)}
+                className="grid h-8 w-8 place-items-center rounded-xl text-slate-300 transition hover:bg-white/10 hover:text-white"
+                aria-label="Search world"
+                title="Search world (/)"
+              >
+                <Search size={16} />
+              </button>
+
+              <button
+                data-testid="world-tools-button"
+                type="button"
+                onClick={() => setToolsOpen(prev => !prev)}
+                className={`grid h-8 w-8 place-items-center rounded-xl transition ${toolsOpen ? 'bg-white/15 text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white'}`}
+                aria-label="Open world tools"
+                title="World tools"
+              >
+                <Settings size={16} />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
+                className="flex h-8 items-center gap-1.5 rounded-xl bg-sky-500/90 px-3 text-[11px] font-semibold text-slate-950 shadow-lg shadow-sky-950/40 transition hover:bg-sky-400"
+              >
+                <Sparkles size={14} />
+                New world
+              </button>
+            </div>
+          </div>
+
+          <div className="pointer-events-none absolute left-1/2 top-4 z-40 w-[min(520px,calc(100vw-32px))] -translate-x-1/2">
+            {searchOpen && (
+              <form onSubmit={handleSearchSubmit} className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/88 p-2 shadow-2xl backdrop-blur-2xl animate-fade-in">
+                <Search size={17} className="ml-2 text-slate-400" />
+                <input
+                  autoFocus
+                  type="search"
+                  placeholder="Find a species, city, or ruin…"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="min-w-0 flex-1 bg-transparent px-1 py-2 text-sm text-white placeholder:text-slate-500 outline-none"
+                  aria-label="Search species, cities, and ruins"
+                />
+                <button type="button" onClick={() => setSearchOpen(false)} className="rounded-xl px-2.5 py-1.5 text-xs text-slate-400 hover:bg-white/10 hover:text-white">Esc</button>
+              </form>
+            )}
+          </div>
+
+          {toolsOpen && (
+            <aside data-testid="world-tools-panel" className="absolute right-4 top-[68px] z-40 w-[292px] rounded-2xl border border-white/10 bg-slate-950/90 p-3 shadow-2xl backdrop-blur-2xl animate-fade-in">
+              <div className="mb-2 flex items-center justify-between px-1">
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">World tools</div>
+                  <div className="mt-0.5 text-xs text-slate-300">Open only what you need.</div>
+                </div>
+                <button type="button" onClick={() => setToolsOpen(false)} className="rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-white/10 hover:text-white">Close</button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  ['TREE_OF_LIFE', 'Tree of Life'],
+                  ['CHRONICLE', 'Chronicle'],
+                  ['WORLD_LAB', 'What if?'],
+                  ['DISCOVERIES', 'Discoveries'],
+                  ['FIELD_GUIDE', 'Field Guide'],
+                  ['CIVILIZATION_DOSSIER', 'Civilizations'],
+                  ['LANGUAGES', 'Languages'],
+                  ['TWIN_WORLDS', 'Twin Worlds'],
+                  ['BRANCH', 'Fork World'],
+                  ['STATS', 'World Stats'],
+                  ['SAVE_LOAD', 'Save & Load'],
+                  ['SETTINGS', 'Settings']
+                ].map(([modal, label]) => (
+                  <button
+                    key={modal}
+                    type="button"
+                    onClick={() => openTool(modal as ModalKey)}
+                    className="rounded-xl border border-white/8 bg-white/[0.035] px-3 py-2 text-left text-[11px] font-medium text-slate-300 transition hover:border-white/15 hover:bg-white/[0.08] hover:text-white"
+                    title={label === 'Save & Load' ? 'Local Saves & World Export/Import' : label}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-1.5 border-t border-white/8 pt-2">
+                <button
+                  type="button"
+                  onClick={toggleAudio}
+                  className={`flex items-center gap-2 rounded-xl px-3 py-2 text-left text-[11px] transition ${isAudioMuted ? 'bg-white/[0.035] text-slate-400 hover:bg-white/[0.08] hover:text-white' : 'bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/15'}`}
+                  aria-pressed={!isAudioMuted}
+                  title={isAudioMuted ? 'Enable sparse event audio' : 'Mute audio'}
+                >
+                  {isAudioMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                  {isAudioMuted ? 'Audio off' : 'Event audio on'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsImmersionMode(true)}
+                  className="rounded-xl bg-white/[0.035] px-3 py-2 text-left text-[11px] text-slate-400 transition hover:bg-white/[0.08] hover:text-white"
+                  title="Hide interface chrome"
+                >
+                  Immersion
+                </button>
+              </div>
+            </aside>
+          )}
+
+          <div className="pointer-events-none absolute left-4 bottom-4 z-20 max-w-[420px] rounded-xl bg-slate-950/30 px-3 py-2 text-[10px] text-slate-400 backdrop-blur-sm">
+            <span className="font-medium text-slate-200">{currentEra?.name || 'Deep time'}</span>
+            <span className="mx-2 text-slate-700">·</span>
+            Drag to orbit · wheel to zoom · click the world to inspect
+          </div>
+
           <InspectorPanel
             selection={selectedEntity}
             state={state}
@@ -412,26 +486,25 @@ export const App: React.FC = () => {
             onOpenWhyForNode={handleOpenWhy}
             onOpenFieldGuide={() => setActiveModal('FIELD_GUIDE')}
             onOpenCivilizationDossier={() => setActiveModal('CIVILIZATION_DOSSIER')}
+            onOpenWhatIf={() => setActiveModal('WORLD_LAB')}
           />
-        )}
-      </main>
 
-      {!isImmersionMode && (
-        <TimelineControls
-          state={state}
-          onTogglePlay={handleTogglePlay}
-          onSetSpeed={handleSetSpeed}
-          onStepYears={handleStepYears}
-          onOpenWhy={() => handleOpenWhy()}
-          onOpenTreeOfLife={() => setActiveModal('TREE_OF_LIFE')}
-          onOpenChronicle={() => setActiveModal('CHRONICLE')}
-          onOpenLanguages={() => setActiveModal('LANGUAGES')}
-          onOpenWorldLab={() => setActiveModal('WORLD_LAB')}
-          onOpenBranchCompare={() => setActiveModal('BRANCH')}
-          onOpenDiscoveries={() => setActiveModal('DISCOVERIES')}
-          onOpenStats={() => setActiveModal('STATS')}
-          onOpenSaveLoad={() => setActiveModal('SAVE_LOAD')}
-        />
+          <TimelineControls
+            state={state}
+            onTogglePlay={handleTogglePlay}
+            onSetSpeed={handleSetSpeed}
+            onStepYears={handleStepYears}
+            onOpenWhy={() => handleOpenWhy()}
+            onOpenTreeOfLife={() => setActiveModal('TREE_OF_LIFE')}
+            onOpenChronicle={() => setActiveModal('CHRONICLE')}
+            onOpenLanguages={() => setActiveModal('LANGUAGES')}
+            onOpenWorldLab={() => setActiveModal('WORLD_LAB')}
+            onOpenBranchCompare={() => setActiveModal('BRANCH')}
+            onOpenDiscoveries={() => setActiveModal('DISCOVERIES')}
+            onOpenStats={() => setActiveModal('STATS')}
+            onOpenSaveLoad={() => setActiveModal('SAVE_LOAD')}
+          />
+        </>
       )}
 
       {activeModal === 'WHY' && (
@@ -442,7 +515,10 @@ export const App: React.FC = () => {
         <TreeOfLifeModal
           state={state}
           onClose={() => setActiveModal(null)}
-          onSelectSpecies={sId => setSelectedEntity({ type: 'SPECIES', id: sId })}
+          onSelectSpecies={sId => {
+            setSelectedEntity({ type: 'SPECIES', id: sId });
+            setActiveModal(null);
+          }}
           onOpenWhy={nodeId => {
             setWhyNodeId(nodeId);
             setActiveModal('WHY');
@@ -454,7 +530,10 @@ export const App: React.FC = () => {
         <ChronicleModal
           state={state}
           onClose={() => setActiveModal(null)}
-          onSelectCoordinates={(x, y) => setSelectedEntity({ type: 'TILE', id: `${x},${y}` })}
+          onSelectCoordinates={(x, y) => {
+            setSelectedEntity({ type: 'TILE', id: `${x},${y}` });
+            setActiveModal(null);
+          }}
           onOpenWhy={nodeId => {
             setWhyNodeId(nodeId);
             setActiveModal('WHY');
@@ -476,7 +555,10 @@ export const App: React.FC = () => {
         <DiscoveriesModal
           state={state}
           onClose={() => setActiveModal(null)}
-          onSelectCoordinates={(x, y) => setSelectedEntity({ type: 'TILE', id: `${x},${y}` })}
+          onSelectCoordinates={(x, y) => {
+            setSelectedEntity({ type: 'TILE', id: `${x},${y}` });
+            setActiveModal(null);
+          }}
         />
       )}
 
@@ -515,7 +597,10 @@ export const App: React.FC = () => {
         <FieldGuideModal
           state={state}
           onClose={() => setActiveModal(null)}
-          onSelectSpecies={sId => setSelectedEntity({ type: 'SPECIES', id: sId })}
+          onSelectSpecies={sId => {
+            setSelectedEntity({ type: 'SPECIES', id: sId });
+            setActiveModal(null);
+          }}
           onOpenWhy={nodeId => {
             setWhyNodeId(nodeId);
             setActiveModal('WHY');
