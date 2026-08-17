@@ -1,52 +1,42 @@
-// Keyboard Shortcuts & Accessibility Guide Modal
-
 import React from 'react';
-import { X, Keyboard } from 'lucide-react';
+import { Keyboard, X } from 'lucide-react';
 
-interface HotkeysModalProps {
-  onClose: () => void;
-}
+interface HotkeysModalProps { onClose: () => void; }
 
 export const HotkeysModal: React.FC<HotkeysModalProps> = ({ onClose }) => {
   const hotkeys = [
-    { key: 'Space', desc: 'Toggle Pause / Resume Simulation' },
-    { key: '1, 2, 3, 4, 5', desc: 'Set Simulation Speed (1x, 5x, 20x, 100x, 1000x)' },
+    { key: 'Tab / Shift+Tab', desc: 'Move keyboard focus through interface controls' },
+    { key: 'Space', desc: 'Toggle pause / resume when the world owns keyboard focus' },
+    { key: '1, 2, 3, 4, 5', desc: 'Set simulation speed (1×, 5×, 20×, 100×, 1000×)' },
     { key: 'WASD / Arrows', desc: 'Pan flat maps or orbit 3D world views' },
     { key: '+ / -', desc: 'Zoom camera in / out' },
     { key: 'Home', desc: 'Reset flat-map camera to world overview' },
     { key: 'V', desc: 'Cycle world presentation mode' },
-    { key: 'T', desc: 'Open Phylogenetic Tree of Life' },
-    { key: 'C', desc: 'Open Historical Chronicle of Eras' },
-    { key: 'Cmd/Ctrl + K', desc: 'Open command palette for World Lab, Discoveries, search, and navigation' },
-    { key: 'Tab', desc: 'Toggle minimal Immersion Mode' },
-    { key: 'Esc', desc: 'Close open modal or deselect current entity' },
-    { key: 'Click + Drag', desc: 'Pan flat maps or orbit 3D world views' },
-    { key: 'Mouse Wheel', desc: 'Zoom toward / away from the world' }
+    { key: 'T', desc: 'Open Tree of Life' },
+    { key: 'C', desc: 'Open Chronicle' },
+    { key: 'Cmd/Ctrl + K', desc: 'Open command palette' },
+    { key: '/', desc: 'Open world search' },
+    { key: 'Esc', desc: 'Close the current modal or selection' },
+    { key: 'Drag / Swipe', desc: 'Pan flat maps or orbit 3D world views' },
+    { key: 'Wheel / Trackpad', desc: 'Zoom toward or away from the world' },
+    { key: 'World Tools → Immersion', desc: 'Enter minimal observation mode without stealing Tab navigation' }
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in select-none">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl overflow-hidden text-slate-200">
-        <div className="px-6 py-4 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-fade-in">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-700/80 bg-slate-900 text-slate-200 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-700 bg-slate-800 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-sky-600/30 border border-sky-500/50 rounded-xl text-sky-400">
-              <Keyboard size={20} />
-            </div>
-            <div>
-              <span className="text-[10px] font-mono uppercase tracking-widest text-sky-400 font-bold">Controls & Accessibility</span>
-              <h2 className="text-lg font-bold text-white font-serif tracking-tight">Keyboard Shortcuts & Navigation</h2>
-            </div>
+            <div className="rounded-xl border border-sky-500/50 bg-sky-600/30 p-2 text-sky-300"><Keyboard size={20} /></div>
+            <div><span className="text-[10px] font-mono font-bold uppercase tracking-widest text-sky-300">Controls & accessibility</span><h2 className="font-serif text-lg font-bold tracking-tight text-white">Keyboard & Navigation</h2></div>
           </div>
-          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800" aria-label="Close controls">
-            <X size={20} />
-          </button>
+          <button onClick={onClose} className="grid h-11 w-11 place-items-center rounded-xl text-slate-400 hover:bg-slate-700 hover:text-white" aria-label="Close controls"><X size={20} /></button>
         </div>
-
-        <div className="p-6 overflow-y-auto space-y-2.5 text-xs font-sans">
-          {hotkeys.map((hk, i) => (
-            <div key={i} className="p-3 bg-slate-800/60 border border-slate-700/60 rounded-xl flex items-center justify-between gap-4">
+        <div className="space-y-2.5 overflow-y-auto p-6 text-xs select-text">
+          {hotkeys.map(hk => (
+            <div key={hk.key} className="flex items-center justify-between gap-4 rounded-xl border border-slate-700/60 bg-slate-800/60 p-3">
               <span className="text-slate-300">{hk.desc}</span>
-              <kbd className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded text-sky-400 font-mono font-bold shadow-inner whitespace-nowrap">{hk.key}</kbd>
+              <kbd className="whitespace-nowrap rounded border border-slate-700 bg-slate-900 px-2.5 py-1 font-mono font-bold text-sky-300 shadow-inner">{hk.key}</kbd>
             </div>
           ))}
         </div>

@@ -35,6 +35,17 @@
   }
 }
 
+#root > div.select-none {
+  user-select: text;
+}
+
+#root main,
+#root [data-testid="world-hud"],
+#root [data-testid="timeline-controls"],
+#root canvas {
+  user-select: none;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -70,7 +81,8 @@
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+[tabindex]:focus-visible {
   outline: 2px solid rgba(125, 211, 252, 0.9);
   outline-offset: 2px;
 }
