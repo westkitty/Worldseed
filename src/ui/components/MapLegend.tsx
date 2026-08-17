@@ -1,5 +1,3 @@
-// Real-Time Map Layer Legend & Metric Histogram HUD
-
 import React from 'react';
 import { MapLayerMode } from './WorldCanvas';
 import { WorldState } from '../../types/simulation';
@@ -10,93 +8,54 @@ interface MapLegendProps {
 }
 
 export const MapLegend: React.FC<MapLegendProps> = ({ activeLayer, state }) => {
+  const title = activeLayer.replaceAll('_', ' ').toLowerCase();
+
   return (
-    <div className="absolute bottom-16 right-4 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md rounded-lg p-2.5 shadow-2xl z-20 text-[11px] text-slate-200 select-none max-w-[200px]">
-      <div className="font-mono font-bold text-sky-400 uppercase text-[10px] mb-1.5 border-b border-slate-700 pb-0.5">
-        Legend: {activeLayer.replace('_', ' ')}
+    <div className="group absolute bottom-20 right-4 z-20 max-w-[220px] rounded-xl border border-white/8 bg-slate-950/42 px-2.5 py-2 text-[9px] text-slate-300 opacity-45 shadow-xl backdrop-blur-lg transition hover:bg-slate-950/82 hover:opacity-100">
+      <div className="font-medium capitalize text-slate-300">Layer · {title}</div>
+      <div className="max-h-0 overflow-hidden opacity-0 transition-all duration-200 group-hover:mt-2 group-hover:max-h-48 group-hover:opacity-100">
+        {activeLayer === 'PHYSICAL' && (
+          <div className="space-y-1.5">
+            {[
+              ['#172554', 'Deep ocean'],
+              ['#0ea5e9', 'Coastal water'],
+              ['#15803d', 'Lowland'],
+              ['#cbd5e1', 'High mountain']
+            ].map(([color, label]) => (
+              <div key={label} className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} /><span>{label}</span></div>
+            ))}
+          </div>
+        )}
+
+        {activeLayer === 'TEMPERATURE' && (
+          <div>
+            <div className="h-1.5 rounded-full bg-gradient-to-r from-blue-600 via-emerald-400 via-amber-300 to-rose-500" />
+            <div className="mt-1 flex justify-between text-[8px] text-slate-500"><span>cold</span><span>warm</span></div>
+          </div>
+        )}
+
+        {activeLayer === 'BIODIVERSITY' && (
+          <div>
+            <div className="h-1.5 rounded-full bg-gradient-to-r from-stone-800 via-lime-700 to-emerald-300" />
+            <div className="mt-1 flex justify-between text-[8px] text-slate-500"><span>sparse</span><span>rich</span></div>
+          </div>
+        )}
+
+        {activeLayer === 'POLITICAL' && (
+          <div className="space-y-1">
+            {Object.values(state.polities).slice(0, 5).map(polity => (
+              <div key={polity.id} className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: polity.colorHex }} /><span className="truncate">{polity.name}</span></div>
+            ))}
+            {Object.values(state.polities).length === 0 && <div className="text-slate-500">No polities yet.</div>}
+          </div>
+        )}
+
+        {activeLayer === 'DISEASES' && <div className="text-slate-400">Red regions indicate active contagion.</div>}
+        {activeLayer === 'RUINS_ARCHAEOLOGY' && <div className="text-slate-400">Violet marks persistent ruins and fossil-bearing strata.</div>}
+        {!['PHYSICAL', 'TEMPERATURE', 'BIODIVERSITY', 'POLITICAL', 'DISEASES', 'RUINS_ARCHAEOLOGY'].includes(activeLayer) && (
+          <div className="text-slate-500">Move through the world to compare this layer spatially.</div>
+        )}
       </div>
-
-      {activeLayer === 'PHYSICAL' && (
-        <div className="space-y-1 font-mono text-[10px]">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-blue-900 border border-blue-700" />
-            <span>Deep Oceans</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-sky-500 border border-sky-400" />
-            <span>Coastal Waters</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-emerald-700 border border-emerald-600" />
-            <span>Fertile Lowlands</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-slate-300 border border-slate-400" />
-            <span>Alpine Peaks</span>
-          </div>
-        </div>
-      )}
-
-      {activeLayer === 'TEMPERATURE' && (
-        <div className="space-y-1">
-          <div className="h-2 rounded bg-gradient-to-r from-blue-600 via-emerald-500 via-amber-400 to-red-600" />
-          <div className="flex justify-between font-mono text-[10px] text-slate-400">
-            <span>-25°C</span>
-            <span>+10°C</span>
-            <span>+35°C</span>
-          </div>
-        </div>
-      )}
-
-      {activeLayer === 'BIODIVERSITY' && (
-        <div className="space-y-1">
-          <div className="h-2 rounded bg-gradient-to-r from-red-800 via-yellow-600 to-emerald-500" />
-          <div className="flex justify-between font-mono text-[10px] text-slate-400">
-            <span>Sparse</span>
-            <span>Climax Hotspot</span>
-          </div>
-        </div>
-      )}
-
-      {activeLayer === 'POLITICAL' && (
-        <div className="space-y-1 text-[10px]">
-          {Object.values(state.polities).slice(0, 4).map(p => (
-            <div key={p.id} className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded" style={{ backgroundColor: p.colorHex }} />
-              <span className="truncate">{p.name}</span>
-            </div>
-          ))}
-          {Object.values(state.polities).length === 0 && (
-            <span className="text-slate-400 italic">No polities established</span>
-          )}
-        </div>
-      )}
-
-      {activeLayer === 'DISEASES' && (
-        <div className="space-y-1 text-[10px]">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-red-600" />
-            <span>Active Contagion Zone</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-slate-800" />
-            <span>Uninfected Biomass</span>
-          </div>
-        </div>
-      )}
-
-      {activeLayer === 'RUINS_ARCHAEOLOGY' && (
-        <div className="space-y-1 text-[10px]">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-purple-500" />
-            <span>Ancient Settlement Ruins</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-amber-500" />
-            <span>Mineralized Fossil Strata</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
