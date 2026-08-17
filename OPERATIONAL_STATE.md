@@ -9,8 +9,8 @@
 - **Native Launch Command**: `npm run mac`
 - **Browser Development Command**: `npm run dev`
 - **Native App Output**: `build/macos/WORLDSEED.app`
-- **Current verified hardening tree**: branch commit `c84683e373e992033ab9d50175cd4d84f0abf627`; this tree is intended for squash-promotion to `main`.
-- **Current verification run**: GitHub Actions `31995006465` — native macOS and Linux/browser jobs SUCCESS.
+- **Current verified implementation commit**: `a4933aca98d6c5dedbb3f279eb0b588ff0a38e84` on `main`.
+- **Current verification run**: GitHub Actions `31995322056` — native macOS and Linux/browser jobs SUCCESS.
 
 ## Product Contract
 WORLDSEED is a world-first deep-time biosphere/civilization simulator. The simulation is the primary interface. The normal experience should be:
@@ -20,25 +20,28 @@ WORLDSEED is a world-first deep-time biosphere/civilization simulator. The simul
 Visible product behavior takes precedence over completion ledgers, generated pass counts, implementation comments, or feature labels.
 
 ## Twenty-Five-Defect Release Hardening — Verified 2026-08-17
-The current verified tree is a bounded correction pass over the existing world-first surface rather than a feature expansion. It preserves the protected simulation/persistence/native-wrapper core while correcting determinism, input/accessibility, semantic UI, map legibility, causal routing, camera framing, and rendering-cost defects.
+The release implementation at `a4933aca98d6c5dedbb3f279eb0b588ff0a38e84` is a bounded correction pass over the existing world-first surface rather than a feature expansion. It preserves the protected simulation, persistence, and native-wrapper core while correcting determinism, input/accessibility, semantic UI, map legibility, causal routing, camera framing, and rendering-cost defects.
 
-Key verified outcomes:
+Verified outcomes include:
 - `SURPRISE_ME` recipe randomization now derives from the seeded simulation PRNG and can reproduce the same topology/genre/era/planet parameters from the same seed.
 - Emergent-discovery IDs no longer use wall-clock time.
 - Browser Tab focus is restored; Tab no longer toggles Immersion Mode.
 - World shortcuts no longer fire through focused controls/dialogs, while direct world camera controls remain available when the world owns input.
-- Pointer/touch/pen world manipulation, pointer capture, current-coordinate picking, minimap keyboard navigation, and ResizeObserver-based viewport updates are in the hardening tree.
+- Pointer/touch/pen world manipulation, pointer capture, current-coordinate picking, minimap keyboard navigation, and ResizeObserver-based viewport updates are in the release tree.
 - The unscoped global `WHY?` action was removed from the timeline; WHY remains contextual to an inspected causal subject.
 - Ruin WHY routing now uses an actual causal node through the originating settlement when available.
 - UI no longer labels normalized terrain elevation as meters.
-- Small-screen speed controls remain available and speed choices expose pressed state semantics.
+- Small-screen speed controls remain available and speed choices expose pressed-state semantics.
 - Minimap/legend visibility and layer coverage were expanded without returning to dashboard-first chrome.
 - Settings no longer expose local-only controls that pretended to alter runtime camera, performance, accessibility, weather, or simulation behavior.
 - 2D observation overlays use smoothed map surfaces rather than hard per-cell rectangles, and a paused 2D world no longer runs an unnecessary full animation loop.
 - 3D world texture refreshes and feature-marker rebuilds are more tightly bounded, uniform fake cloud haze is hidden, renderer pixel ratio is capped, and expensive full-texture grain work is replaced by bounded deterministic texture detail.
 - Globe/Snow Globe/Orbit hero framing now uses corrected spherical focus math, an information-rich generated-world target, and less aggressively cropped starting distance.
 
-Verification evidence for branch commit `c84683e373e992033ab9d50175cd4d84f0abf627`, GitHub Actions run `31995006465`:
+The first hardening candidate failed its native build because a renderer enhancement type boundary collapsed to `never`; that failure was corrected rather than bypassed. A later green candidate was visually inspected and revealed weak 3D hero framing, which was also corrected before promotion to `main`.
+
+## Verification Evidence — `main`
+GitHub Actions run `31995322056`, commit `a4933aca98d6c5dedbb3f279eb0b588ff0a38e84`:
 - unit/invariant tests: PASS
 - TypeScript/Vite production build: PASS
 - deterministic hardening tests: PASS
@@ -53,11 +56,9 @@ Verification evidence for branch commit `c84683e373e992033ab9d50175cd4d84f0abf62
 - hero views: Globe / Snow Globe / Relief-Diorama / Orbital
 - repeated view switches: 18
 - continuous 20× timing check: +17 simulated years
-- persistence round trip: saved 46 → mutated 56 → restored 46
+- persistence round trip: saved 45 → mutated 55 → restored 45
 - runtime console/page errors: 0
 - green-run screenshots manually inspected after the automated gate
-
-The first hardening candidate failed its native build because a renderer enhancement type boundary collapsed to `never`; that failure was corrected rather than bypassed. The subsequent hardening runs passed both native and browser gates.
 
 ## Superseded / Rejected Presentation
 - The pre-rebuild dashboard-heavy product surface is rejected. Do not restore the permanent toolbar/card-wall/modal-first layout as the default experience.
@@ -111,13 +112,13 @@ The first hardening candidate failed its native build because a renderer enhance
 - Play/pause and speed settings are synchronized with engine state.
 - Playback advances from elapsed real time using `requestAnimationFrame`, carries fractional simulated years forward, and performs bounded catch-up after rendering stalls.
 - Simulation speed therefore no longer depends on how many timer callbacks happened to fire while rendering was busy.
-- Current browser verification advanced **17 simulated years** during the bounded 20× timing check.
+- Current `main` browser verification advanced **17 simulated years** during the bounded 20× timing check.
 
 ## Persistence — Verified 2026-08-17
 - Save/load uses versioned persistence envelopes and engine runtime snapshots.
 - Runtime snapshots preserve private simulation state needed for deterministic continuation, including population maps, PRNG state, and entity counters.
 - The browser journey performs save → mutate world by +10 years → load → wait for asynchronous restoration → confirm the exact saved year.
-- Current verified run restored year 46 after mutating to year 56.
+- Current `main` verification restored year 45 after mutating to year 55.
 - Dedicated engine tests cover deterministic continuation after serialization/restoration.
 
 ## Native macOS Wrapper — Verified in CI
@@ -129,7 +130,7 @@ The first hardening candidate failed its native build because a renderer enhance
 - Native `NSOpenPanel` / `NSSavePanel` handle import/export paths; external links open in the default browser.
 - JavaScript/runtime/navigation failures are surfaced rather than silently presenting a blank white window.
 - macOS CI requires actual React `#root` content plus successful IndexedDB access inside native WebKit; process survival alone is not accepted.
-- Current hardening tree passed the macOS native build, bundle verification, rendered-root check, and IndexedDB readiness gate in run `31995006465`.
+- Commit `a4933aca98d6c5dedbb3f279eb0b588ff0a38e84` passed the macOS native build, bundle verification, rendered-root check, and IndexedDB readiness gate in run `31995322056`.
 
 ## Current Browser Acceptance Gate
 The real Chromium journey verifies the product experience rather than an inventory of dashboard controls. It checks:
@@ -151,24 +152,6 @@ The real Chromium journey verifies the product experience rather than an invento
 - repeated switching across all six presentation modes;
 - explicit Immersion Mode;
 - browser console/page runtime errors.
-
-### Current browser evidence
-GitHub Actions run `31995006465`, verified candidate tree `c84683e373e992033ab9d50175cd4d84f0abf627`:
-- unit/invariant tests: PASS
-- TypeScript/Vite production build: PASS
-- Chromium user journey: PASS
-- default view: Globe
-- world viewport coverage: 100% width / 100% height
-- keyboard Tab navigation: PASS
-- curiosity triad: PASS
-- unscoped WHY removal: PASS
-- fake settings removal: PASS
-- audio silent until enabled: PASS
-- hero views: Globe / Snow Globe / Relief-Diorama / Orbital
-- repeated view switches: 18
-- continuous 20× timing check: +17 simulated years
-- persistence round trip: saved 46 → mutated 56 → restored 46
-- runtime errors: 0
 
 ## Visual QA Evidence
 - Green-run screenshots were manually inspected after the automated gate rather than accepting the green badge alone.
@@ -197,7 +180,7 @@ GitHub Actions run `31995006465`, verified candidate tree `c84683e373e992033ab9d
 - A single screenshot as proof of all world seeds/scenarios.
 
 ## Known Limits / Remaining Spec Gaps
-- **Target-Mac rebuild/review pending for this hardening tree.** CI and screenshots verify the rebuilt behavior, but the user has not yet pulled and visually judged this exact tree in `/Users/andrew/Worldseed`.
+- **Target-Mac rebuild/review pending for commit `a4933aca98d6c5dedbb3f279eb0b588ff0a38e84`.** CI and screenshots verify the rebuilt behavior, but the user has not yet pulled and visually judged this exact implementation in `/Users/andrew/Worldseed`.
 - **Starting-era fidelity remains incomplete.** Named starting eras are exposed, but the simulation core has not been proven to bootstrap every named era into a biologically, technologically and historically coherent state. Do not claim full era parity.
 - **Exotic topology depth remains partial.** Edge/migration behavior differentiates topologies, but exotic topology choices have not been proven to alter every geology/climate/civilization subsystem.
 - **Visual art depth remains procedural/stylized.** The rebuilt surface is materially cleaner and more dimensional, but it is not equivalent to a bespoke high-budget authored art pipeline.
@@ -205,9 +188,9 @@ GitHub Actions run `31995006465`, verified candidate tree `c84683e373e992033ab9d
 - **Native signing/notarization** remains local/ad-hoc only. No Developer ID signing, notarization, stapling or public Gatekeeper distribution certification is claimed.
 
 ## Current Release Status
-- **Core source/build**: VERIFIED GREEN for the hardening tree in GitHub Actions `31995006465`.
-- **Playable browser core**: VERIFIED GREEN with the hardened world-first acceptance journey in the same run.
-- **Native macOS wrapper**: CI-VERIFIED GREEN for bundle build, real WebKit React rendering and IndexedDB in the same run.
-- **Product surface**: world-first rebuild preserved and hardened; target-user aesthetic verdict for this exact tree still pending.
+- **Core source/build**: VERIFIED GREEN on `a4933aca98d6c5dedbb3f279eb0b588ff0a38e84` in GitHub Actions `31995322056`.
+- **Playable browser core**: VERIFIED GREEN with the hardened world-first acceptance journey on the same commit.
+- **Native macOS wrapper**: CI-VERIFIED GREEN for bundle build, real WebKit React rendering and IndexedDB on the same commit.
+- **Product surface**: world-first rebuild preserved and hardened; target-user aesthetic verdict for this exact implementation still pending.
 - **Full original mega-spec parity**: PARTIAL because starting-era fidelity, deeper exotic-topology semantics, and authored art depth remain incomplete.
 - **Developer distribution**: LOCAL BUILD ONLY; not Developer ID signed/notarized.
