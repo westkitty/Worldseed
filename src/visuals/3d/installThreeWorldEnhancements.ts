@@ -76,6 +76,17 @@ const findRichestTile = (state: WorldState): { x: number; y: number } => {
   return { x: best.x, y: best.y };
 };
 
+// The original camera-focus transform used an inverted longitude plus a ninety-degree offset,
+// which could put the requested tile on the limb or the far side of the planet. Match the
+// spherical surface coordinates directly so minimap jumps and the initial hero framing land
+// in the center of the visible hemisphere.
+proto.focusTile = function (tileX: number, tileY: number, width: number, height: number) {
+  const u = (tileX + 0.5) / width;
+  const v = (tileY + 0.5) / height;
+  this.rotY = (u - 0.5) * Math.PI * 2;
+  this.rotX = Math.max(-1.1, Math.min(1.1, (0.5 - v) * Math.PI));
+};
+
 proto.createWorldTexture = function (state: WorldState, layer: string): THREE.CanvasTexture {
   const self: any = this;
   const width = state.config.width;
@@ -159,6 +170,14 @@ proto.updateScene = function (state: WorldState, viewMode: WorldViewMode, layer 
 
   if (self.cloudMesh) self.cloudMesh.visible = false;
   if (self.renderer) self.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+
+  if (previousMode !== viewMode) {
+    const preferredDistance = viewMode === 'GLOBE' ? 50 : viewMode === 'SNOW_GLOBE' ? 52 : viewMode === 'ORBITAL_VIEW' ? 60 : null;
+    if (preferredDistance !== null) {
+      self.zoomDistance = preferredDistance;
+      self.targetZoom = preferredDistance;
+    }
+  }
 
   if (
     previousMode !== viewMode &&
