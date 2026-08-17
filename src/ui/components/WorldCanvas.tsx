@@ -1,6 +1,3 @@
-// Multi-Layer & Multi-View Cinematic Canvas Renderer supporting 6 Presentation Modes
-// Features True WebGL 3D Rendering (Three.js) for Globe, Snow Globe, Relief Diorama, Orbital Cosmos
-
 import React, { useEffect, useRef, useState } from 'react';
 import { InspectionSelection, WorldState, WorldViewMode } from '../../types/simulation';
 import { Camera3D, WorldProjectionEngine } from '../../visuals/views/projections';
@@ -50,38 +47,38 @@ const layerColor = (
   switch (layer) {
     case 'TEMPERATURE': {
       const t = Math.max(0, Math.min(1, (tile.currentTemp + 35) / 85));
-      return `hsla(${220 - t * 220}, 82%, 52%, 0.78)`;
+      return `hsla(${220 - t * 220}, 72%, 48%, 0.72)`;
     }
     case 'RAINFALL': {
       const rain = Math.max(0, Math.min(1, tile.rainfall));
-      return `hsla(${210 - rain * 25}, 86%, ${22 + rain * 48}%, 0.78)`;
+      return `hsla(${210 - rain * 25}, 76%, ${22 + rain * 42}%, 0.72)`;
     }
     case 'BIODIVERSITY': {
       const activity = Math.max(0, Math.min(1, (tile.biomass / 1000 + tile.vegetationDensity) / 2));
-      return `hsla(${25 + activity * 115}, 72%, ${26 + activity * 34}%, 0.72)`;
+      return `hsla(${25 + activity * 115}, 62%, ${26 + activity * 30}%, 0.68)`;
     }
     case 'POLITICAL':
-      return tile.polityId ? `hsla(${hashHue(tile.polityId)}, 68%, 50%, 0.78)` : 'rgba(15, 23, 42, 0.45)';
+      return tile.polityId ? `hsla(${hashHue(tile.polityId)}, 58%, 48%, 0.72)` : 'rgba(15, 23, 42, 0.24)';
     case 'SETTLEMENTS':
-      if (tile.settlementId) return 'rgba(245, 158, 11, 0.82)';
-      if (tile.infrastructureLevel > 0) return 'rgba(161, 98, 7, 0.62)';
-      return 'rgba(15, 23, 42, 0.36)';
+      if (tile.settlementId) return 'rgba(230, 174, 69, 0.78)';
+      if (tile.infrastructureLevel > 0) return 'rgba(126, 92, 47, 0.54)';
+      return 'rgba(15, 23, 42, 0.22)';
     case 'CULTURES': {
-      if (!tile.dominantCultureId) return 'rgba(15, 23, 42, 0.4)';
+      if (!tile.dominantCultureId) return 'rgba(15, 23, 42, 0.24)';
       const culture = state.cultures[tile.dominantCultureId];
-      return culture?.colorHex ? `${culture.colorHex}cc` : `hsla(${hashHue(tile.dominantCultureId)}, 62%, 50%, 0.78)`;
+      return culture?.colorHex ? `${culture.colorHex}bb` : `hsla(${hashHue(tile.dominantCultureId)}, 55%, 48%, 0.7)`;
     }
     case 'LANGUAGES': {
       const languageId = tile.dominantCultureId ? state.cultures[tile.dominantCultureId]?.languageId : undefined;
-      return languageId ? `hsla(${hashHue(languageId)}, 68%, 52%, 0.78)` : 'rgba(15, 23, 42, 0.4)';
+      return languageId ? `hsla(${hashHue(languageId)}, 58%, 50%, 0.72)` : 'rgba(15, 23, 42, 0.24)';
     }
     case 'DISEASES':
-      return tile.activeContagionIds.length > 0 ? 'rgba(239, 68, 68, 0.86)' : 'rgba(15, 23, 42, 0.38)';
+      return tile.activeContagionIds.length > 0 ? 'rgba(190, 70, 76, 0.8)' : 'rgba(15, 23, 42, 0.22)';
     case 'RUINS_ARCHAEOLOGY':
-      return tile.ruins.length > 0 || tile.fossils.length > 0 ? 'rgba(168, 85, 247, 0.84)' : 'rgba(28, 25, 23, 0.38)';
+      return tile.ruins.length > 0 || tile.fossils.length > 0 ? 'rgba(145, 108, 176, 0.78)' : 'rgba(28, 25, 23, 0.22)';
     case 'ENVIRONMENTAL_SCARS': {
       const damage = Math.max(0, Math.min(1, Math.max(tile.environmentalDamage, tile.pollution, tile.erosionLevel)));
-      return damage > 0.05 ? `hsla(${42 - damage * 42}, 82%, ${48 - damage * 18}%, 0.78)` : 'rgba(15, 23, 42, 0.18)';
+      return damage > 0.05 ? `hsla(${42 - damage * 42}, 68%, ${43 - damage * 16}%, 0.72)` : 'rgba(15, 23, 42, 0.12)';
     }
     default:
       return 'rgba(0,0,0,0)';
@@ -130,10 +127,14 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   const threeContainerRef = useRef<HTMLDivElement | null>(null);
   const threeRendererRef = useRef<ThreeWorldRenderer | null>(null);
   const particleEngineRef = useRef<ParticleEngine>(new ParticleEngine());
+  const pendingVisualStateRef = useRef(state);
+  const activeLayerRef = useRef(activeLayer);
+  const viewModeRef = useRef(viewMode);
+  const visualUpdateTimerRef = useRef<number | null>(null);
 
   const is3DView = viewMode === 'GLOBE' || viewMode === 'SNOW_GLOBE' || viewMode === 'RELIEF_DIORAMA' || viewMode === 'ORBITAL_VIEW';
 
-  const [camera, setCamera] = useState<Camera3D>({ x: 0, y: 0, zoom: 1.0, rotX: 0.15, rotY: 0.0 });
+  const [camera, setCamera] = useState<Camera3D>({ x: 0, y: 0, zoom: 1, rotX: 0.15, rotY: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragThresholdPassed, setDragThresholdPassed] = useState(false);
@@ -143,6 +144,19 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   const { width, height } = config;
 
   useEffect(() => {
+    pendingVisualStateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    activeLayerRef.current = activeLayer;
+    viewModeRef.current = viewMode;
+    pendingVisualStateRef.current = state;
+
+    if (visualUpdateTimerRef.current !== null) {
+      window.clearTimeout(visualUpdateTimerRef.current);
+      visualUpdateTimerRef.current = null;
+    }
+
     if (is3DView && threeContainerRef.current) {
       if (!threeRendererRef.current) threeRendererRef.current = new ThreeWorldRenderer(threeContainerRef.current);
       threeRendererRef.current.updateScene(state, viewMode, activeLayer);
@@ -150,9 +164,26 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       threeRendererRef.current.dispose();
       threeRendererRef.current = null;
     }
-  }, [is3DView, viewMode, activeLayer, state]);
+  }, [is3DView, viewMode, activeLayer]);
+
+  useEffect(() => {
+    if (!is3DView || !threeRendererRef.current) return;
+    pendingVisualStateRef.current = state;
+
+    if (visualUpdateTimerRef.current === null) {
+      visualUpdateTimerRef.current = window.setTimeout(() => {
+        visualUpdateTimerRef.current = null;
+        threeRendererRef.current?.updateScene(
+          pendingVisualStateRef.current,
+          viewModeRef.current,
+          activeLayerRef.current
+        );
+      }, 220);
+    }
+  }, [state, is3DView]);
 
   useEffect(() => () => {
+    if (visualUpdateTimerRef.current !== null) window.clearTimeout(visualUpdateTimerRef.current);
     threeRendererRef.current?.dispose();
     threeRendererRef.current = null;
   }, []);
@@ -258,7 +289,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       const oldOriginY = (canvas.height - height * oldTileSize) / 2 + prev.y;
       const worldX = (mouseX - oldOriginX) / oldTileSize;
       const worldY = (mouseY - oldOriginY) / oldTileSize;
-      const nextZoom = Math.max(0.4, Math.min(10.0, prev.zoom * zoomFactor));
+      const nextZoom = Math.max(0.4, Math.min(10, prev.zoom * zoomFactor));
       const newTileSize = baseTileSize * nextZoom;
       const baseOriginX = (canvas.width - width * newTileSize) / 2;
       const baseOriginY = (canvas.height - height * newTileSize) / 2;
@@ -367,15 +398,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden select-none bg-slate-950 cursor-grab active:cursor-grabbing"
+      className="relative w-full h-full overflow-hidden select-none bg-[#02060b] cursor-grab active:cursor-grabbing"
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
       onWheel={handleWheel}
     >
-      {is3DView && <div ref={threeContainerRef} className="w-full h-full absolute inset-0 pointer-events-none" />}
-      {!is3DView && <canvas ref={canvasRef} className="w-full h-full" />}
+      {is3DView && <div ref={threeContainerRef} className="absolute inset-0 h-full w-full pointer-events-none" />}
+      {!is3DView && <canvas ref={canvasRef} className="h-full w-full" />}
 
       <Minimap state={state} camera={{ x: camera.x, y: camera.y, zoom: camera.zoom }} onCenterCoordinates={handleCenterCoordinates} />
       <MapLegend activeLayer={activeLayer} state={state} />
@@ -388,28 +419,20 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       />
 
       {currentHoveredTileData && (
-        <div className="absolute bottom-4 left-4 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md rounded-lg p-3 text-xs text-slate-200 shadow-2xl pointer-events-none min-w-[220px]">
-          <div className="flex items-center justify-between font-mono font-semibold text-sky-400 mb-1 border-b border-slate-700 pb-1">
-            <span>Tile ({currentHoveredTileData.x}, {currentHoveredTileData.y})</span>
-            <span className="text-amber-400">{currentHoveredTileData.biome.replace('_', ' ')}</span>
+        <div className="pointer-events-none absolute bottom-20 left-4 max-w-[260px] rounded-xl border border-white/8 bg-slate-950/64 px-3 py-2 text-[10px] text-slate-300 shadow-xl backdrop-blur-xl">
+          <div className="flex items-center gap-2">
+            <span className="font-medium capitalize text-slate-100">{currentHoveredTileData.biome.replaceAll('_', ' ').toLowerCase()}</span>
+            <span className="text-slate-600">·</span>
+            <span className="font-mono text-slate-500">{currentHoveredTileData.x}, {currentHoveredTileData.y}</span>
           </div>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px] text-slate-300">
-            <div>Elev: <span className="text-white">{Math.round(currentHoveredTileData.elevation * 1000)}m</span></div>
-            <div>Temp: <span className="text-white">{currentHoveredTileData.currentTemp}°C</span></div>
-            <div>Rain: <span className="text-white">{Math.round(currentHoveredTileData.rainfall * 100)}%</span></div>
-            <div>Moist: <span className="text-white">{Math.round(currentHoveredTileData.moisture * 100)}%</span></div>
-            <div>Biomass: <span className="text-emerald-400">{Math.round(currentHoveredTileData.biomass)}</span></div>
-            <div>Pop: <span className="text-amber-400">{Math.round(currentHoveredTileData.populationDensity)}</span></div>
+          <div className="mt-1 text-slate-500">
+            {Math.round(currentHoveredTileData.elevation * 1000)} m · {currentHoveredTileData.currentTemp} °C · {Math.round(currentHoveredTileData.rainfall * 100)}% rain
           </div>
           {currentHoveredTileData.settlementId && state.settlements[currentHoveredTileData.settlementId] && (
-            <div className="mt-2 pt-1 border-t border-slate-700 font-sans text-amber-300 font-medium">
-              🏛️ {state.settlements[currentHoveredTileData.settlementId].name} ({state.settlements[currentHoveredTileData.settlementId].tier})
-            </div>
+            <div className="mt-1 font-medium text-amber-200">{state.settlements[currentHoveredTileData.settlementId].name}</div>
           )}
           {currentHoveredTileData.ruins.length > 0 && (
-            <div className="mt-1 font-sans text-purple-300 font-medium">
-              🏺 Ancient Ruins of {currentHoveredTileData.ruins[0].originalName}
-            </div>
+            <div className="mt-1 font-medium text-violet-200">Ruins of {currentHoveredTileData.ruins[0].originalName}</div>
           )}
         </div>
       )}
