@@ -87,9 +87,9 @@ export const InstrumentsMenu: React.FC<InstrumentsMenuProps> = props => {
         aria-haspopup="menu"
         title="Instruments"
         className="ws-chip flex items-center gap-1.5 px-2.5 h-9 text-[12px]"
-        style={{ color: 'var(--ws-ink-muted)', borderColor: open ? 'color-mix(in srgb, var(--ws-accent) 55%, transparent)' : undefined }}
+        style={{ color: 'var(--ws-ink-muted)' }}
       >
-        <LayoutGrid size={15} style={{ color: 'var(--ws-accent)' }} />
+        <LayoutGrid size={15} />
         <span className="hidden lg:inline">Instruments</span>
       </button>
 

@@ -75,33 +75,28 @@ export const Minimap: React.FC<MinimapProps> = ({ state, camera, viewMode, surfa
   };
 
   return (
-    <div className="ws-panel absolute top-4 left-4 p-1.5 z-20 select-none hidden sm:block" title="Locator — drag or click to jump">
-      <div
-        className="rounded-[7px] overflow-hidden"
-        style={{ border: '1px solid var(--ws-hairline-strong)', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.4), inset 0 1px 6px rgba(0,0,0,0.5)' }}
-      >
-        <canvas
-          ref={canvasRef}
-          style={{ width: MAP_W, height: mapH }}
-          onPointerDown={e => {
+    <div className="ws-panel absolute top-4 left-4 p-1.5 z-20 select-none hidden sm:block">
+      <canvas
+        ref={canvasRef}
+        style={{ width: MAP_W, height: mapH }}
+        onPointerDown={e => {
+          e.stopPropagation();
+          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+          jump(e.clientX, e.clientY);
+        }}
+        onPointerMove={e => {
+          if (e.buttons === 1) {
             e.stopPropagation();
-            (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
             jump(e.clientX, e.clientY);
-          }}
-          onPointerMove={e => {
-            if (e.buttons === 1) {
-              e.stopPropagation();
-              jump(e.clientX, e.clientY);
-            }
-          }}
-          onPointerUp={e => e.stopPropagation()}
-          className="cursor-crosshair block"
-          aria-hidden="true"
-        />
-      </div>
-      <div className="flex items-center justify-between px-0.5 pt-1 ws-numeric ws-hud-label" style={{ letterSpacing: '0.06em' }}>
+          }
+        }}
+        onPointerUp={e => e.stopPropagation()}
+        className="rounded-[7px] cursor-crosshair block"
+        aria-hidden="true"
+      />
+      <div className="flex items-center justify-between px-0.5 pt-1 ws-numeric text-[10px]" style={{ color: 'var(--ws-ink-faint)' }}>
         <span>{width}×{height}</span>
-        <span style={{ color: 'var(--ws-accent)' }}>{isFlat ? `${camera.zoom.toFixed(1)}×` : viewMode.replace(/_/g, ' ').toLowerCase()}</span>
+        <span>{isFlat ? `${camera.zoom.toFixed(1)}×` : viewMode.replace(/_/g, ' ').toLowerCase()}</span>
       </div>
     </div>
   );

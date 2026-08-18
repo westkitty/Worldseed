@@ -104,41 +104,6 @@
   color: var(--ws-ink);
 }
 
-/* One merged instrument group for the view/layer selectors — the strongest, most persistent
-   pair of controls reads as a single instrument instead of two equally-weighted pills. */
-.ws-instrument-group {
-  background: var(--ws-surface-raised);
-  border: 1px solid var(--ws-hairline-strong);
-  border-radius: var(--ws-r-md);
-  display: flex;
-  align-items: stretch;
-  overflow: hidden;
-}
-
-.ws-instrument-group > label {
-  border: none;
-  background: transparent;
-  border-radius: 0;
-}
-
-.ws-instrument-group > label + label {
-  border-left: 1px solid var(--ws-hairline);
-}
-
-/* Low-priority icon actions (audio, immersion): no permanent chip weight, a hover state only,
-   so the persistent chrome doesn't compete with the world for attention. */
-.ws-icon-ghost {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--ws-r-md);
-  transition: background-color var(--ws-motion), border-color var(--ws-motion), color var(--ws-motion);
-}
-
-.ws-icon-ghost:hover {
-  background: var(--ws-surface-raised);
-  border-color: var(--ws-hairline);
-}
-
 /* Native select rendered as project chrome rather than an OS control. */
 .ws-select {
   appearance: none;
@@ -154,15 +119,6 @@
 .ws-select option {
   background: #0d121c;
   color: var(--ws-ink);
-}
-
-/* Shared HUD label — Minimap, MapLegend and the hover tile readout use the same small-caps
-   header treatment so they read as one instrument system rather than separate widgets. */
-.ws-hud-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--ws-ink-faint);
 }
 
 /* ---------- Scrollbars ---------- */
