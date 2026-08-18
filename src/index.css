@@ -3,44 +3,38 @@
 /*
   WORLDSEED DESIGN SYSTEM
   -----------------------
-  One coherent surface language for a planetary observatory. The world is the
-  interface: chrome is dark, low-chroma and recessive so the planet owns colour.
-  Everything here is local — no webfont, image or stylesheet is fetched at runtime.
+  The world is the subject. Chrome is deliberately opaque enough to stay readable without
+  expensive backdrop blur over WebGL. No webfonts, images, or remote styles are required.
 */
 
 @layer base {
   :root {
-    /* Typography — platform stacks only (local-first, offline-identical). */
     --font-sans: ui-sans-serif, -apple-system, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     --font-serif: ui-serif, 'New York', 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
     --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, 'Roboto Mono', monospace;
 
-    /* Surfaces — three depths only. Chrome floats above the world, never boxes it in. */
-    --ws-void: #05070d;
-    --ws-surface: rgba(11, 15, 24, 0.82);
-    --ws-surface-strong: rgba(13, 18, 28, 0.94);
-    --ws-surface-raised: rgba(24, 32, 46, 0.92);
-    --ws-hairline: rgba(148, 168, 200, 0.14);
-    --ws-hairline-strong: rgba(148, 168, 200, 0.26);
+    --ws-void: #020408;
+    --ws-surface: rgba(9, 13, 20, 0.91);
+    --ws-surface-strong: rgba(10, 15, 23, 0.97);
+    --ws-surface-raised: rgba(18, 25, 36, 0.94);
+    --ws-hairline: rgba(151, 174, 205, 0.13);
+    --ws-hairline-strong: rgba(151, 184, 220, 0.27);
 
-    /* Ink */
-    --ws-ink: #eef3fb;
-    --ws-ink-muted: #9fb0c8;
-    --ws-ink-faint: #6d7f99;
+    --ws-ink: #f1f5fb;
+    --ws-ink-muted: #9eadc2;
+    --ws-ink-faint: #687990;
 
-    /* Accents — one per meaning, never decorative. */
-    --ws-accent: #6fd0ff;      /* interactive / selection */
-    --ws-life: #6ee7a8;        /* biosphere */
-    --ws-culture: #f2b45c;     /* civilisation */
-    --ws-deep-time: #b79bff;   /* history, ruins, causality */
-    --ws-alarm: #ff7a6b;       /* collapse, disease, damage */
+    --ws-accent: #79cbea;
+    --ws-life: #70dca6;
+    --ws-culture: #eab466;
+    --ws-deep-time: #af9be8;
+    --ws-alarm: #ee7e72;
 
-    /* Rhythm */
-    --ws-r-sm: 6px;
-    --ws-r-md: 10px;
-    --ws-r-lg: 16px;
-    --ws-shadow-float: 0 10px 34px -12px rgba(0, 0, 0, 0.85), 0 2px 8px -4px rgba(0, 0, 0, 0.6);
-    --ws-motion: 160ms cubic-bezier(0.2, 0.8, 0.3, 1);
+    --ws-r-sm: 5px;
+    --ws-r-md: 8px;
+    --ws-r-lg: 12px;
+    --ws-shadow-float: 0 14px 34px -18px rgba(0, 0, 0, 0.95), 0 1px 0 rgba(255, 255, 255, 0.025) inset;
+    --ws-motion: 130ms cubic-bezier(0.2, 0.8, 0.3, 1);
   }
 
   html, body, #root {
@@ -51,7 +45,7 @@
     margin: 0;
     padding: 0;
     font-family: var(--font-sans);
-    background-color: var(--ws-void);
+    background: radial-gradient(circle at 50% 42%, #09111b 0%, #03060a 58%, #010203 100%);
     color: var(--ws-ink);
     overflow: hidden;
     overscroll-behavior: none;
@@ -60,11 +54,20 @@
     font-synthesis-weight: none;
   }
 
-  /* Display type: the world's own voice. */
+  button,
+  select,
+  input {
+    font: inherit;
+  }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   .ws-display {
     font-family: var(--font-serif);
     font-weight: 600;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.055em;
   }
 
   .ws-numeric {
@@ -77,55 +80,59 @@
 /* ---------- Floating chrome primitives ---------- */
 
 .ws-panel {
-  background: var(--ws-surface);
+  background: linear-gradient(180deg, rgba(15, 21, 31, 0.95), rgba(8, 12, 18, 0.94));
   border: 1px solid var(--ws-hairline);
   border-radius: var(--ws-r-lg);
   box-shadow: var(--ws-shadow-float);
-  backdrop-filter: blur(18px) saturate(1.25);
-  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .ws-chip {
-  background: var(--ws-surface-raised);
+  background: rgba(18, 25, 36, 0.88);
   border: 1px solid var(--ws-hairline);
   border-radius: var(--ws-r-md);
-  transition: border-color var(--ws-motion), background-color var(--ws-motion), color var(--ws-motion);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.018) inset;
+  transition: border-color var(--ws-motion), background-color var(--ws-motion), color var(--ws-motion), transform var(--ws-motion);
 }
 
 .ws-chip:hover {
   border-color: var(--ws-hairline-strong);
-  background: rgba(38, 50, 70, 0.94);
+  background: rgba(26, 36, 50, 0.95);
+}
+
+.ws-chip:active {
+  transform: translateY(1px);
 }
 
 .ws-chip[aria-pressed='true'],
 .ws-chip[data-active='true'] {
-  border-color: color-mix(in srgb, var(--ws-accent) 55%, transparent);
-  background: color-mix(in srgb, var(--ws-accent) 16%, rgba(24, 32, 46, 0.92));
+  border-color: color-mix(in srgb, var(--ws-accent) 48%, transparent);
+  background: color-mix(in srgb, var(--ws-accent) 12%, rgba(15, 22, 31, 0.96));
   color: var(--ws-ink);
 }
 
-/* Native select rendered as project chrome rather than an OS control. */
 .ws-select {
   appearance: none;
   -webkit-appearance: none;
   background-image: linear-gradient(45deg, transparent 50%, var(--ws-ink-muted) 50%),
                     linear-gradient(135deg, var(--ws-ink-muted) 50%, transparent 50%);
-  background-position: right 12px center, right 7px center;
+  background-position: right 11px center, right 6px center;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
-  padding-right: 26px;
+  padding-right: 25px;
 }
 
 .ws-select option {
-  background: #0d121c;
+  background: #0b1018;
   color: var(--ws-ink);
 }
 
 /* ---------- Scrollbars ---------- */
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
 }
 
 ::-webkit-scrollbar-track {
@@ -133,36 +140,36 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(110, 130, 160, 0.3);
+  background: rgba(110, 130, 160, 0.28);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(140, 165, 200, 0.55);
+  background: rgba(140, 165, 200, 0.5);
   background-clip: padding-box;
 }
 
 /* ---------- Motion ---------- */
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: scale(0.985); }
+  from { opacity: 0; transform: scale(0.99); }
   to { opacity: 1; transform: scale(1); }
 }
 
 @keyframes wsRise {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(7px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes wsPulse {
-  0%, 100% { opacity: 0.55; }
+  0%, 100% { opacity: 0.58; }
   50% { opacity: 1; }
 }
 
-.animate-fade-in { animation: fadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.ws-rise { animation: wsRise 0.22s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+.animate-fade-in { animation: fadeIn 0.14s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.ws-rise { animation: wsRise 0.18s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
 .ws-pulse { animation: wsPulse 2.4s ease-in-out infinite; }
 
 /* ---------- Focus & accessibility ---------- */
@@ -185,7 +192,6 @@
   border: 0;
 }
 
-/* Touch targets stay reachable on coarse pointers without inflating desktop chrome. */
 @media (pointer: coarse) {
   button, select, [role='button'] {
     min-height: 40px;
