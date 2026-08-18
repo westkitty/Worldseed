@@ -96,10 +96,10 @@ were deleted after their genuine improvements were ported into the owning classe
 
 ## Visual and UX Work Delivered
 - `src/visuals/terrain/planetSurface.ts` composites one authoritative planetary surface consumed by **both** the 2D cartographic views and the WebGL hero views, so all six modes are unmistakably the same world: bilinear terrain interpolation, hill shading from derived normals, blended biome transitions, bathymetric depth ramp, coastal strand, temperature-driven ice with noise-perturbed edges, deterministic micro-texture, traced rivers and lakes, roads and cultivated ground, settlement footprints sized by real population, and ruin scatter.
-- Globe: 128×96 sphere, bump relief from the surface image, a custom back-face atmosphere shader, a banded procedural cloud deck, and one consistent sun shared by every mode.
-- Snow Globe: physical transmissive glass with clearcoat, a turned wooden plinth with a brass collar, and bounded snow falling under its own gravity inside the dome.
-- Relief Diorama: displaced terrain, a translucent sea plane at the real sea level, and a carved slab base.
-- Orbital: distant framing, atmosphere limb, deterministic starfield, an orbiting cratered moon.
+- The compositor now also generates, in the same paint pass: a dedicated height/elevation texture, a tangent-space normal map derived from it (broad tectonic shape plus domain-warped sub-tile detail), and roughness/metalness/clearcoat textures driven by biome, altitude, wetness and damage. The colour texture is no longer used as a bump source.
+- Globe: 128×96 sphere using one shared `MeshPhysicalMaterial` (normal/roughness/metalness/clearcoat maps) built by `createPlanetMaterial()`, a softened back-face atmosphere shader, a climate-derived cloud deck (moisture/temperature/latitude, not an arbitrary band formula), and one consistent sun shared by every mode.
+- Snow Globe and Relief Diorama's terrain/relief meshes use the same shared material, so all sphere/plane presentations of solid ground respond to light consistently.
+- Orbital: distant framing, atmosphere limb, a custom-shader starfield with a real brightness distribution, an orbiting cratered moon.
 - Flat Atlas / Square World: shared surface with graticule and equator, settlement symbols scaled by tier with capital rings, ruin glyphs, labels at readable zoom, selection brackets, and a brass-framed tabletop treatment for the bounded Square World.
 - Design system in `src/index.css`: surface, ink, accent, radius, shadow and motion tokens; `.ws-panel`, `.ws-chip`, `.ws-select`, `.ws-display`, `.ws-numeric` primitives; `prefers-reduced-motion` honoured globally and by both renderers.
 - Inspector rewritten as a field record — identity, a written read of the thing in its place, then FOLLOW / WHY? / WHAT IF? in the same position for every subject type.
@@ -150,6 +150,70 @@ correctly under CI's software WebGL on Linux.
 
 Measured generation cost at the default 64×48 world: PREBIOTIC 54 ms, MATURE_BIOSPHERE 2.4 s, FIRST_CITIES 2.9 s, MEDIEVAL 3.9 s, INDUSTRIAL 5.2 s, SPACEFARING 4.4 s, POST_COLLAPSE 6.5 s.
 
+## Visual Fidelity Pass (2026-08-18, later same day, this machine)
+
+A second pass this date reworked the Globe's rendering pipeline and HUD chrome — geological
+relief, water material, land material, clouds, atmosphere/lighting, starfield, hero framing
+and control hierarchy. Simulation, persistence and topology code were not touched.
+
+**Changed files:** `src/visuals/terrain/planetSurface.ts`, `src/visuals/3d/ThreeWorldRenderer.ts`,
+`src/App.tsx`, `src/index.css`, `src/ui/components/WorldCanvas.tsx`,
+`src/ui/components/Minimap.tsx`, `src/ui/components/MapLegend.tsx`,
+`src/ui/components/TimelineControls.tsx`, `src/ui/components/InstrumentsMenu.tsx`.
+
+**What changed:**
+- `PlanetSurfaceCompositor` now paints six layers in one pass instead of one: albedo, a
+  dedicated height/elevation texture, a tangent-space normal map derived from real elevation
+  gradients plus domain-warped sub-tile detail, and roughness/metalness/clearcoat textures
+  driven by biome, altitude, snow, coastal wetness and damage. The colour texture is no longer
+  read as a bump map.
+- Sub-tile detail (vegetation clumping, soil/rock grain, snow breakup, shoreline/shelf
+  irregularity) is domain-warped to avoid the lattice-aligned look of raw value noise, and a
+  separate climate-derived cloud layer replaces the old arbitrary band formula.
+- `ThreeWorldRenderer` builds one shared `MeshPhysicalMaterial` (via `createPlanetMaterial()`)
+  from those maps for the Globe, Snow Globe and Relief Diorama meshes, so land and water carry
+  distinct, physically-motivated responses instead of one flat `MeshStandardMaterial`. The
+  atmosphere shader's Fresnel falloff and colour were softened, lighting moved from a flat
+  `AmbientLight` to a `HemisphereLight` fill, and the starfield became a custom shader with a
+  real per-star brightness/colour distribution. Globe/Orbital framing now settles slightly
+  above dead-centre to clear the bottom time deck.
+- `App.tsx` merges the view/layer selectors into one instrument group and demotes audio/
+  immersion to borderless icon buttons; `Minimap`, `MapLegend`, the hover-tile readout and
+  `TimelineControls` share a tighter, more consistent HUD grammar, and the legend's swatches
+  are now generated from the same colour formulas the compositor actually renders.
+
+**Validation run this pass (local, after the changes above):**
+| Gate | Command | Result |
+|---|---|---|
+| Types | `npx tsc --noEmit` | clean |
+| Tests | `npm test` | **42 passed / 5 files**, exit 0 |
+| Production build | `npm run build` | success |
+| Real Chromium journey | `node scripts/browser-playtest.mjs` | **PASS**, 0 runtime errors |
+| Native macOS build | `npm run build:mac` | bundle verification PASS |
+
+Manually inspected in-browser at seed 482910, Globe / Physical Relief, desktop size, across
+several rotations and zoom levels, and cross-checked against Relief Diorama, Snow Globe and
+Orbital. CI has not re-run against this pass; the table above is local-machine evidence only.
+
+**Defect found and fixed during this pass, not merely claimed fixed:** the first working
+version of the normal/detail pipeline produced a severe radiating starburst artifact at both
+globe poles on inspection. Root cause was layered: an oversized sub-tile normal exaggeration
+constant (`detailRelief`, tuned from 300 down to 34) combined with the equirectangular
+projection's longitude compression near a pole, plus specular response from the new roughness/
+clearcoat maps landing on the sphere's thin near-degenerate polar triangles. Fixed by (a)
+correcting the exaggeration constant, (b) fading normal-map perturbation, sub-tile noise
+amplitude and specular (roughness/metalness/clearcoat) response to a flat, matte response
+within roughly the outer third of each pole's tile-rows, and (c) blending albedo toward a
+per-row longitude-averaged colour in that same band, since the underlying biome grid itself
+aliases at extreme longitude compression independent of any added noise.
+
+**Remaining defect, not solved:** after the above, the polar cap is materially better — clean
+at the immediate pole, and the transition band is soft rather than a hard starburst — but a
+faint blocky/checkered residue is still visible in the transition band on close zoom. This is
+a reduction of the pre-existing "tile-scale stair-stepping" limitation, not an elimination of
+it; a fully seamless pole would need a non-equirectangular polar projection patch, which was
+out of scope for this pass.
+
 ## Evidence Not Accepted As Release Proof
 - Historical claims of `24 Reality Rounds`, `6 consecutive green rounds` and the generated `4,000 pass` ledger are not authoritative runtime proof.
 - A passing build alone is not proof of playability.
@@ -164,7 +228,7 @@ Measured generation cost at the default 64×48 world: PREBIOTIC 54 ms, MATURE_BI
 - **Topology depth is improved but still partial.** Adjacency, migration, hydrology drainage and contagion travel now share real topology semantics. Climate transport, trade routing and civilisation travel still assume a wrapping longitude for every topology.
 - **Species and settlement 3D meshes were not reworked this pass.** Inherited traits drive the existing creature mesh engine; visual divergence between related species has not been re-verified. Settlement presence on the planet is rendered as footprints and lights baked into the shared surface, not as per-settlement 3D geometry.
 - **Continental placement can be strongly polar for some seeds**, because plate elevation bias dominates the noise term. Worlds remain valid and varied, but land is not guaranteed near the equator.
-- **The polar cap edge shows tile-scale stair-stepping on the globe**, where the equirectangular texture converges at the poles.
+- **The polar cap edge still shows a faint blocky/checkered residue on the globe**, where the equirectangular texture converges at the poles. The visual fidelity pass (below) reduced this from a severe starburst to a soft transition band but did not eliminate it — see that section for root cause and what was tried.
 - **On very narrow viewports the WHY? / WHAT IF? / Discoveries cluster scrolls off the time deck.** It remains reachable by scrolling the deck, and the same three actions are always present in the inspector.
 - **The production JS bundle is ~1.0 MB (276 kB gzipped)** and is not code-split.
 - **Native signing/notarisation**: local ad-hoc signing only. No Developer ID signing, notarisation, stapling, Gatekeeper testing or custom app icon.

@@ -15,6 +15,16 @@ import { PlanetSurfaceCompositor, SurfaceLayer, visualNoise } from '../terrain/p
 const GLOBE_RADIUS = 18;
 const SNOW_RADIUS = 13;
 
+/** The full set of generated planetary textures for one composited world state. */
+interface PlanetMaps {
+  albedo: THREE.Texture;
+  normal: THREE.Texture;
+  roughness: THREE.Texture;
+  metalness: THREE.Texture;
+  clearcoat: THREE.Texture;
+  cloud: THREE.Texture;
+}
+
 export class ThreeWorldRenderer {
   private container: HTMLElement;
   private renderer: THREE.WebGLRenderer | null = null;
@@ -38,14 +48,22 @@ export class ThreeWorldRenderer {
   private sunLight: THREE.DirectionalLight | null = null;
   private rimLight: THREE.DirectionalLight | null = null;
 
-  private compositor = new PlanetSurfaceCompositor(10);
+  private compositor = new PlanetSurfaceCompositor(14);
   private worldTexture: THREE.CanvasTexture | null = null;
+  private normalTexture: THREE.CanvasTexture | null = null;
+  private roughnessTexture: THREE.CanvasTexture | null = null;
+  private metalnessTexture: THREE.CanvasTexture | null = null;
+  private clearcoatTexture: THREE.CanvasTexture | null = null;
+  private cloudTexture: THREE.CanvasTexture | null = null;
   private lastSurfaceRevision = -1;
 
   public rotX = 0.28;
   public rotY = 0.6;
   public zoomDistance = 46;
   private targetZoom = 46;
+  // Composed hero framing keeps the planet clear of the bottom time deck by settling the
+  // subject slightly above true centre instead of dead-centring it in the viewport.
+  private verticalBias = 0;
 
   private currentViewMode: WorldViewMode | null = null;
   private currentDimensions = '';
@@ -73,7 +91,7 @@ export class ThreeWorldRenderer {
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 0.98;
     this.renderer.domElement.dataset.worldseedRenderer = 'three';
     this.renderer.domElement.style.display = 'block';
     this.container.appendChild(this.renderer.domElement);
@@ -89,12 +107,14 @@ export class ThreeWorldRenderer {
     // makes the six presentation modes feel like one planet.
     // The sun sits above and slightly behind the default camera position, so the hero face
     // of the planet is lit and the terminator falls near the limb rather than across the
-    // middle of the subject. A cool fill from below keeps the shadowed side readable.
-    this.scene.add(new THREE.AmbientLight(0x3d5170, 1.85));
-    this.sunLight = new THREE.DirectionalLight(0xfff4e2, 2.35);
+    // middle of the subject. A hemisphere fill (cool "sky" from above, dark "ground" from
+    // below) reads as soft bounced light instead of the flat, shadow-crushing ambient wash a
+    // single AmbientLight produces, so the night limb keeps a trace of form.
+    this.scene.add(new THREE.HemisphereLight(0x33455f, 0x0a0d14, 1.35));
+    this.sunLight = new THREE.DirectionalLight(0xfff4e2, 2.1);
     this.sunLight.position.set(-16, 44, 58);
     this.scene.add(this.sunLight);
-    this.rimLight = new THREE.DirectionalLight(0x74a9ff, 0.5);
+    this.rimLight = new THREE.DirectionalLight(0x74a9ff, 0.32);
     this.rimLight.position.set(48, -34, -30);
     this.scene.add(this.rimLight);
 
@@ -102,12 +122,20 @@ export class ThreeWorldRenderer {
     this.startLoop();
   }
 
+  /**
+   * A deterministic starfield with a genuine brightness distribution — many faint stars, a
+   * few bright ones — restrained colour-temperature variation, and soft circular sprites
+   * instead of uniform square dots. A custom shader is used because PointsMaterial cannot
+   * vary per-star size, colour and softness together.
+   */
   private createStarfield() {
     if (!this.scene) return;
-    const count = 900;
+    const count = 2200;
     const positions = new Float32Array(count * 3);
     const sizes = new Float32Array(count);
-    // Deterministic star placement: the sky is the same every session.
+    const colors = new Float32Array(count * 3);
+    const alphas = new Float32Array(count);
+
     for (let i = 0; i < count; i++) {
       const u = visualNoise(9176, i, 1, 3);
       const v = visualNoise(9176, i, 2, 5);
@@ -117,14 +145,67 @@ export class ThreeWorldRenderer {
       positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
       positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
       positions[i * 3 + 2] = r * Math.cos(phi);
-      sizes[i] = 0.6 + visualNoise(9176, i, 3, 7) * 2.4;
+
+      // A cubed distribution skews heavily toward dim stars, with only the rare few near 1 —
+      // real sky brightness, not a flat random spread.
+      const brightness = Math.pow(visualNoise(9176, i, 3, 7), 3.4);
+      sizes[i] = 0.7 + brightness * 2.6;
+      alphas[i] = 0.28 + brightness * 0.72;
+
+      // Extremely restrained colour-temperature variation: mostly neutral white, occasionally
+      // drifting warm or cool, never saturated.
+      const temper = visualNoise(9176, i, 4, 11);
+      if (temper < 0.15) {
+        colors[i * 3] = 1.0;
+        colors[i * 3 + 1] = 0.92;
+        colors[i * 3 + 2] = 0.8;
+      } else if (temper > 0.88) {
+        colors[i * 3] = 0.82;
+        colors[i * 3 + 1] = 0.9;
+        colors[i * 3 + 2] = 1.0;
+      } else {
+        colors[i * 3] = 0.94;
+        colors[i * 3 + 1] = 0.96;
+        colors[i * 3 + 2] = 1.0;
+      }
     }
+
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('aAlpha', new THREE.BufferAttribute(alphas, 1));
+
     this.starfieldPoints = new THREE.Points(
       geo,
-      new THREE.PointsMaterial({ color: 0xdfe8f8, size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0.7, depthWrite: false })
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexShader: `
+          attribute float aSize;
+          attribute vec3 aColor;
+          attribute float aAlpha;
+          varying vec3 vColor;
+          varying float vAlpha;
+          void main() {
+            vColor = aColor;
+            vAlpha = aAlpha;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = aSize;
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          varying float vAlpha;
+          void main() {
+            vec2 c = gl_PointCoord - vec2(0.5);
+            float falloff = smoothstep(0.5, 0.0, length(c));
+            gl_FragColor = vec4(vColor, falloff * vAlpha);
+          }
+        `
+      })
     );
     this.scene.add(this.starfieldPoints);
   }
@@ -144,34 +225,77 @@ export class ThreeWorldRenderer {
     ].join(':');
   }
 
+  /** Builds (once) or re-tags (on revision change) a CanvasTexture for one compositor layer. */
+  private syncTexture(
+    slot: 'worldTexture' | 'normalTexture' | 'roughnessTexture' | 'metalnessTexture' | 'clearcoatTexture' | 'cloudTexture',
+    canvas: HTMLCanvasElement,
+    isColor: boolean,
+    revisionChanged: boolean
+  ): THREE.CanvasTexture {
+    let tex = this[slot];
+    if (!tex || tex.image !== canvas) {
+      tex?.dispose();
+      tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      if (isColor) tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = this.renderer?.capabilities.getMaxAnisotropy() ?? 1;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.needsUpdate = true;
+      this[slot] = tex;
+    } else if (revisionChanged) {
+      tex.needsUpdate = true;
+    }
+    return tex;
+  }
+
   private refreshSurface(state: WorldState, layer: SurfaceLayer) {
     const result = this.compositor.compose(state, layer, this.surfaceSignature(state));
+    const revisionChanged = result.revision !== this.lastSurfaceRevision;
+    if (revisionChanged) this.lastSurfaceRevision = result.revision;
 
-    if (!this.worldTexture || this.worldTexture.image !== result.canvas) {
-      this.worldTexture?.dispose();
-      this.worldTexture = new THREE.CanvasTexture(result.canvas);
-      this.worldTexture.wrapS = THREE.RepeatWrapping;
-      this.worldTexture.wrapT = THREE.ClampToEdgeWrapping;
-      this.worldTexture.colorSpace = THREE.SRGBColorSpace;
-      this.worldTexture.anisotropy = this.renderer?.capabilities.getMaxAnisotropy() ?? 1;
-      this.worldTexture.minFilter = THREE.LinearMipmapLinearFilter;
-      this.worldTexture.magFilter = THREE.LinearFilter;
-      this.lastSurfaceRevision = -1;
-    }
+    const albedo = this.syncTexture('worldTexture', result.canvas, true, revisionChanged);
+    const normal = this.syncTexture('normalTexture', result.normalCanvas, false, revisionChanged);
+    const roughness = this.syncTexture('roughnessTexture', result.roughnessCanvas, false, revisionChanged);
+    const metalness = this.syncTexture('metalnessTexture', result.metalnessCanvas, false, revisionChanged);
+    const clearcoat = this.syncTexture('clearcoatTexture', result.clearcoatCanvas, false, revisionChanged);
+    const cloud = this.syncTexture('cloudTexture', result.cloudCanvas, false, revisionChanged);
 
-    if (result.revision !== this.lastSurfaceRevision) {
-      this.lastSurfaceRevision = result.revision;
-      this.worldTexture.needsUpdate = true;
-    }
+    return { albedo, normal, roughness, metalness, clearcoat, cloud };
+  }
 
-    return this.worldTexture;
+  /**
+   * One coherent material for every solid presentation of the planet (globe, snow globe,
+   * relief). Roughness/metalness/clearcoat are supplied entirely by the generated maps, so
+   * the scalar factors stay at 1 and never re-scale what the compositor already decided.
+   */
+  private createPlanetMaterial(maps: {
+    albedo: THREE.Texture;
+    normal: THREE.Texture;
+    roughness: THREE.Texture;
+    metalness: THREE.Texture;
+    clearcoat: THREE.Texture;
+  }): THREE.MeshPhysicalMaterial {
+    return new THREE.MeshPhysicalMaterial({
+      map: maps.albedo,
+      normalMap: maps.normal,
+      normalScale: new THREE.Vector2(1, 1),
+      roughness: 1,
+      roughnessMap: maps.roughness,
+      metalness: 1,
+      metalnessMap: maps.metalness,
+      clearcoat: 1,
+      clearcoatMap: maps.clearcoat,
+      clearcoatRoughness: 0.06
+    });
   }
 
   public updateScene(state: WorldState, viewMode: WorldViewMode, layer: SurfaceLayer = 'PHYSICAL') {
     if (!this.scene || !this.worldGroup) return;
 
     const dimensions = `${state.config.width}x${state.config.height}`;
-    const texture = this.refreshSurface(state, layer);
+    const maps = this.refreshSurface(state, layer);
     const needsRebuild = this.currentViewMode !== viewMode || this.currentDimensions !== dimensions;
 
     if (!needsRebuild) {
@@ -185,11 +309,11 @@ export class ThreeWorldRenderer {
     this.currentDimensions = dimensions;
 
     if (viewMode === 'GLOBE' || viewMode === 'ORBITAL_VIEW') {
-      this.buildGlobe(texture, viewMode === 'ORBITAL_VIEW');
+      this.buildGlobe(maps, viewMode === 'ORBITAL_VIEW');
     } else if (viewMode === 'SNOW_GLOBE') {
-      this.buildSnowGlobe(texture, state);
+      this.buildSnowGlobe(maps, state);
     } else {
-      this.buildRelief(texture, state);
+      this.buildRelief(maps, state);
     }
 
     this.frameView(viewMode);
@@ -199,24 +323,14 @@ export class ThreeWorldRenderer {
     }
   }
 
-  private buildGlobe(texture: THREE.Texture, orbital: boolean) {
+  private buildGlobe(maps: PlanetMaps, orbital: boolean) {
     if (!this.worldGroup) return;
 
-    this.surfaceMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(GLOBE_RADIUS, 128, 96),
-      new THREE.MeshStandardMaterial({
-        map: texture,
-        // A bump derived from the same image gives the terminator real surface relief
-        // without shipping or generating a separate height texture.
-        bumpMap: texture,
-        bumpScale: 0.55,
-        roughness: 0.86,
-        metalness: 0.04
-      })
-    );
+    this.surfaceMesh = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_RADIUS, 128, 96), this.createPlanetMaterial(maps));
     this.worldGroup.add(this.surfaceMesh);
 
-    // Atmosphere: a back-face shell with additive falloff reads as air, not as a glow decal.
+    // Atmosphere: a back-face shell with a soft, restrained Fresnel falloff reads as thin air
+    // seen edge-on rather than a glowing outline.
     this.atmosphereMesh = new THREE.Mesh(
       new THREE.SphereGeometry(GLOBE_RADIUS * 1.055, 64, 48),
       new THREE.ShaderMaterial({
@@ -225,8 +339,8 @@ export class ThreeWorldRenderer {
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         uniforms: {
-          uColor: { value: new THREE.Color(0x5fb4ff) },
-          uIntensity: { value: orbital ? 1.15 : 0.95 }
+          uColor: { value: new THREE.Color(0x9fc4e8) },
+          uIntensity: { value: orbital ? 0.7 : 0.58 }
         },
         vertexShader: `
           varying vec3 vNormalView;
@@ -245,21 +359,22 @@ export class ThreeWorldRenderer {
           varying vec3 vViewDir;
           void main() {
             float rim = 1.0 - abs(dot(normalize(vNormalView), normalize(vViewDir)));
-            float falloff = pow(clamp(rim, 0.0, 1.0), 3.2);
-            gl_FragColor = vec4(uColor * falloff * uIntensity, falloff * 0.9);
+            float falloff = pow(clamp(rim, 0.0, 1.0), 4.4);
+            gl_FragColor = vec4(uColor * falloff * uIntensity, falloff * 0.62);
           }
         `
       })
     );
     this.worldGroup.add(this.atmosphereMesh);
 
-    // Thin, sparse cloud deck. Deterministic, and light enough that terrain stays readable.
+    // Broken, climate-derived cloud deck. Deterministic, and restrained enough that terrain
+    // stays readable beneath it.
     this.cloudMesh = new THREE.Mesh(
       new THREE.SphereGeometry(GLOBE_RADIUS * 1.018, 64, 48),
       new THREE.MeshStandardMaterial({
-        map: this.createCloudTexture(),
+        map: maps.cloud,
         transparent: true,
-        opacity: 0.34,
+        opacity: 0.8,
         depthWrite: false,
         roughness: 1
       })
@@ -276,13 +391,10 @@ export class ThreeWorldRenderer {
     }
   }
 
-  private buildSnowGlobe(texture: THREE.Texture, state: WorldState) {
+  private buildSnowGlobe(maps: PlanetMaps, state: WorldState) {
     if (!this.worldGroup) return;
 
-    this.surfaceMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(SNOW_RADIUS, 96, 72),
-      new THREE.MeshStandardMaterial({ map: texture, bumpMap: texture, bumpScale: 0.4, roughness: 0.88, metalness: 0.03 })
-    );
+    this.surfaceMesh = new THREE.Mesh(new THREE.SphereGeometry(SNOW_RADIUS, 96, 72), this.createPlanetMaterial(maps));
     this.surfaceMesh.position.y = 1.5;
     this.worldGroup.add(this.surfaceMesh);
 
@@ -356,30 +468,30 @@ export class ThreeWorldRenderer {
     this.worldGroup.add(this.particleSystem);
   }
 
-  private buildRelief(texture: THREE.Texture, state: WorldState) {
+  private buildRelief(maps: PlanetMaps, state: WorldState) {
     if (!this.worldGroup) return;
     const cols = state.config.width;
     const rows = state.config.height;
     const spanX = 42;
     const spanZ = spanX * (rows / cols);
 
-    this.reliefMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(spanX, spanZ, cols - 1, rows - 1),
-      new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9, metalness: 0.02 })
-    );
+    this.reliefMesh = new THREE.Mesh(new THREE.PlaneGeometry(spanX, spanZ, cols - 1, rows - 1), this.createPlanetMaterial(maps));
     this.reliefMesh.rotation.x = -Math.PI / 2;
     this.updateReliefGeometry(state);
     this.worldGroup.add(this.reliefMesh);
 
-    // A translucent sea plane at exactly the simulation's sea level makes elevation legible.
+    // A translucent sea plane at exactly the simulation's sea level makes elevation legible,
+    // using the same restrained clearcoat Fresnel language as the globe's ocean.
     this.oceanPlane = new THREE.Mesh(
       new THREE.PlaneGeometry(spanX, spanZ),
       new THREE.MeshPhysicalMaterial({
         color: 0x1b4f7a,
         transparent: true,
         opacity: 0.72,
-        roughness: 0.12,
-        metalness: 0.1,
+        roughness: 0.1,
+        metalness: 0.14,
+        clearcoat: 0.55,
+        clearcoatRoughness: 0.06,
         transmission: 0.35,
         thickness: 1.4
       })
@@ -431,43 +543,6 @@ export class ThreeWorldRenderer {
     geometry.computeBoundingSphere();
   }
 
-  /** Cloud deck generated once, deterministically, at a modest resolution. */
-  private createCloudTexture(): THREE.CanvasTexture {
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 256;
-    const ctx = canvas.getContext('2d')!;
-    const image = ctx.createImageData(canvas.width, canvas.height);
-    for (let y = 0; y < canvas.height; y++) {
-      for (let x = 0; x < canvas.width; x++) {
-        let v = 0;
-        let amp = 0.5;
-        let freq = 3;
-        for (let o = 0; o < 5; o++) {
-          const nx = (x / canvas.width) * freq;
-          const ny = (y / canvas.height) * freq;
-          v += amp * this.smoothNoise(nx, ny, o);
-          amp *= 0.5;
-          freq *= 2.1;
-        }
-        // Banded latitudes: clouds gather in convergence zones rather than uniformly.
-        const lat = Math.abs(y / canvas.height - 0.5) * 2;
-        const band = 0.55 + 0.45 * Math.cos(lat * Math.PI * 2.4);
-        const a = Math.max(0, Math.min(1, (v * band - 0.42) * 3.2));
-        const idx = (y * canvas.width + x) * 4;
-        image.data[idx] = 255;
-        image.data[idx + 1] = 255;
-        image.data[idx + 2] = 255;
-        image.data[idx + 3] = a * 255;
-      }
-    }
-    ctx.putImageData(image, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  }
-
   private createMoonTexture(): THREE.CanvasTexture {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -489,20 +564,6 @@ export class ThreeWorldRenderer {
     return tex;
   }
 
-  private smoothNoise(x: number, y: number, channel: number): number {
-    const xi = Math.floor(x);
-    const yi = Math.floor(y);
-    const xf = x - xi;
-    const yf = y - yi;
-    const u = xf * xf * (3 - 2 * xf);
-    const v = yf * yf * (3 - 2 * yf);
-    const n00 = visualNoise(7717, xi, yi, channel);
-    const n10 = visualNoise(7717, xi + 1, yi, channel);
-    const n01 = visualNoise(7717, xi, yi + 1, channel);
-    const n11 = visualNoise(7717, xi + 1, yi + 1, channel);
-    return (n00 * (1 - u) + n10 * u) * (1 - v) + (n01 * (1 - u) + n11 * u) * v;
-  }
-
   /**
    * Camera distance that fits a sphere of `radius` inside the smaller viewport axis with
    * `margin` headroom (1.0 = exactly touching the edges).
@@ -520,25 +581,32 @@ export class ThreeWorldRenderer {
   private frameView(viewMode: WorldViewMode) {
     switch (viewMode) {
       // Framing is derived from the subject's radius and the camera's field of view so the
-      // planet is large but never cropped by the viewport.
+      // planet is large but never cropped by the viewport. Globe and Orbital additionally
+      // settle a little above dead centre so the permanent time deck at the bottom of the
+      // screen never reads as colliding with the subject.
       case 'GLOBE':
         this.targetZoom = this.distanceToFit(GLOBE_RADIUS, 1.32);
         this.rotX = 0.26;
+        this.verticalBias = GLOBE_RADIUS * 0.11;
         break;
       case 'ORBITAL_VIEW':
         this.targetZoom = this.distanceToFit(GLOBE_RADIUS, 2.6);
         this.rotX = 0.14;
+        this.verticalBias = GLOBE_RADIUS * 0.11;
         break;
       case 'SNOW_GLOBE':
         this.targetZoom = this.distanceToFit(SNOW_RADIUS * 1.42, 1.5);
         this.rotX = 0.16;
+        this.verticalBias = 0;
         break;
       default:
         this.targetZoom = this.distanceToFit(23, 1.08);
         this.rotX = 0.62;
+        this.verticalBias = 0;
         break;
     }
     this.zoomDistance = this.targetZoom;
+    if (this.worldGroup) this.worldGroup.position.y = this.verticalBias;
   }
 
   public setSelection(state: WorldState, tile: { x: number; y: number } | null) {
@@ -793,7 +861,17 @@ export class ThreeWorldRenderer {
       this.starfieldPoints = null;
     }
     this.worldTexture?.dispose();
+    this.normalTexture?.dispose();
+    this.roughnessTexture?.dispose();
+    this.metalnessTexture?.dispose();
+    this.clearcoatTexture?.dispose();
+    this.cloudTexture?.dispose();
     this.worldTexture = null;
+    this.normalTexture = null;
+    this.roughnessTexture = null;
+    this.metalnessTexture = null;
+    this.clearcoatTexture = null;
+    this.cloudTexture = null;
     this.compositor.dispose();
     this.lastSurfaceRevision = -1;
 
