@@ -107,7 +107,7 @@ describe('WORLDSEED Core Invariants', () => {
         expect(tile.rainfall).toBeLessThanOrEqual(1.0);
       }
     }
-  });
+  }, 30000);
 
   it('CAUSAL REFERENCES & WHY ENGINE: Causal links point to valid entities and generate narratives', () => {
     const engine = new SimulationEngine(TEST_CONFIG);

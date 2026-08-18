@@ -22,6 +22,45 @@ Claims that were not re-verified have been removed rather than carried forward.
 
 ---
 
+## Reconciliation With `origin/main` (2026-08-18)
+
+This pass began from a local `main` that was **20 commits behind `origin/main`**. Upstream had
+independently rebuilt much of the same UI and renderer surface. Rather than discard either
+line of work, the two were merged and every overlapping file was decided on its merits.
+
+**Adopted from upstream** (better than what this pass had):
+- Simulation now advances from elapsed wall-clock time on animation frames instead of timer
+  callbacks, so throttled frames slow the apparent rate rather than silently changing how many
+  years a tick covers.
+- `src/runtime/accessibilityGuards.ts`: `Tab` is returned to the browser for focus traversal
+  and application shortcuts are suppressed while an interactive control or modal has focus.
+  The local `Tab`-toggles-Immersion handler was removed in favour of it.
+- `src/audio/soundscape.ts` rebuilt as sparse opt-in event audio with no continuous oscillator.
+- `SURPRISE_ME` is seed-deterministic (was `Math.random()`); its era pool has been widened to
+  all ten eras now that eras genuinely bootstrap.
+- The camera focus transform: the previous one inverted longitude and added a ninety-degree
+  offset, so locator jumps could land on the limb or the far side of the planet.
+- Opening framing that settles on the longitude band carrying the most land, life and
+  settlement, reimplemented as a method on `ThreeWorldRenderer` rather than a prototype patch.
+- Browser-journey assertions encoding the product contract: world dominates the viewport,
+  default view is Globe, permanent chrome stays small, secondary tools stay hidden until
+  asked for, zero audio oscillators ever constructed, no cosmetic settings exposed.
+- `WHY?` was removed from the time deck. Unscoped, it fell back to an arbitrary causal node;
+  it now appears only on a selection, where it has a real subject.
+
+**Kept from this pass** (better than upstream's equivalent):
+- `PlanetSurfaceCompositor` supersedes `SmoothMapRenderer`, which upscaled flat biome colours
+  8x with bilinear smoothing and no elevation, shading, coastline, hydrology or micro-detail,
+  and served the 2D views only. The compositor is shared by 2D and 3D.
+- The Three.js hero views (atmosphere shader, cloud deck, snow-globe glass and plinth, relief
+  sea plane and slab, viewport-derived framing) supersede the prototype-patching approach in
+  `installThreeWorldEnhancements.ts`, whose texture path was a bilinear upscale of flat layer
+  colours with random speckle.
+- All simulation-layer work below, which upstream did not touch at all.
+
+`SmoothMapRenderer.ts`, `installSmoothMapRenderer.ts` and `installThreeWorldEnhancements.ts`
+were deleted after their genuine improvements were ported into the owning classes.
+
 ## Defects Corrected This Pass
 
 ### Simulation fidelity
@@ -81,13 +120,19 @@ Claims that were not re-verified have been removed rather than carried forward.
 | Gate | Command | Result |
 |---|---|---|
 | Types | `npx tsc --noEmit` | clean |
-| Tests | `npm test` | **39 passed / 4 files**, exit 0 |
+| Tests | `npm test` | **42 passed / 5 files**, exit 0 (includes upstream's release-hardening suite) |
 | Production build | `npm run build` | success |
 | Real Chromium journey | `node scripts/browser-playtest.mjs` | **PASS**, 0 runtime errors, 0 console errors |
 | Native macOS build | `npm run build:mac` | bundle verification PASS |
 | Native WebKit render + IndexedDB | bundled smoke harness | **PASS** |
 
-Browser journey coverage: first-light state, default Globe, Flat Atlas, Square World, all four WebGL hero views with drag/orbit/wheel/selection/layer switching, 24 consecutive view switches, keyboard camera without triggering unrelated modals, continuous 20× simulation, IndexedDB save → advance → load restoring the exact saved year (7 → 107 → 7), globe selection opening the inspector, WHY? trace, Instruments menu, Immersion Mode, and a 430×860 viewport check asserting the time control, Instruments menu and view selector all remain present. Live canvas count after view torture: 2.
+One pre-existing invariant test (`NUMERICAL & POPULATION SAFETY`, 1,500 simulated years) was
+given an explicit 30 s timeout matching its siblings. Its assertions are unchanged; worlds now
+generate real continents, so the same 1,500 years is genuinely several times more ecological
+work than when the default world was 6% land.
+
+Browser journey coverage: first-light state, default Globe, Flat Atlas, Square World, all four WebGL hero views with drag/orbit/wheel/selection/layer switching, 24 consecutive view switches, keyboard camera without triggering unrelated modals, continuous 20× simulation, IndexedDB save → advance → load restoring the exact saved year (7 → 107 → 7), globe selection opening the inspector, WHY? trace, Instruments menu, Immersion Mode, and a 430×860 viewport check asserting the time control, Instruments menu and view selector all remain present. Live canvas count after view torture: 2. Audio oscillators constructed across the entire
+session: 0. World-first contract assertions: PASS.
 
 Measured generation cost at the default 64×48 world: PREBIOTIC 54 ms, MATURE_BIOSPHERE 2.4 s, FIRST_CITIES 2.9 s, MEDIEVAL 3.9 s, INDUSTRIAL 5.2 s, SPACEFARING 4.4 s, POST_COLLAPSE 6.5 s.
 
@@ -100,6 +145,9 @@ Measured generation cost at the default 64×48 world: PREBIOTIC 54 ms, MATURE_BI
 ## Known Limitations
 - **Target-Mac confirmation still pending.** The native build, bundle verification and WebKit rendered-root + IndexedDB checks pass locally, but the user has not yet launched and driven `build/macos/WORLDSEED.app` by hand since this pass.
 - **CI has not been run on these changes.** Only local execution of the same commands is recorded above.
+- **Two lines of UI work were merged.** Every overlapping file was resolved deliberately and
+  the result was re-validated end to end, but the merged interface has had one review pass,
+  not the several that each side had separately.
 - **Topology depth is improved but still partial.** Adjacency, migration, hydrology drainage and contagion travel now share real topology semantics. Climate transport, trade routing and civilisation travel still assume a wrapping longitude for every topology.
 - **Species and settlement 3D meshes were not reworked this pass.** Inherited traits drive the existing creature mesh engine; visual divergence between related species has not been re-verified. Settlement presence on the planet is rendered as footprints and lights baked into the shared surface, not as per-settlement 3D geometry.
 - **Continental placement can be strongly polar for some seeds**, because plate elevation bias dominates the noise term. Worlds remain valid and varied, but land is not guaranteed near the equator.

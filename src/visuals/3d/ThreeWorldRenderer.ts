@@ -54,6 +54,7 @@ export class ThreeWorldRenderer {
   private clock = 0;
   private reducedMotion = false;
   private selectionMarker: THREE.Mesh | null = null;
+  private hasFramedWorld = false;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -192,6 +193,10 @@ export class ThreeWorldRenderer {
     }
 
     this.frameView(viewMode);
+    if (!this.hasFramedWorld) {
+      this.hasFramedWorld = true;
+      this.frameMostInterestingRegion(state);
+    }
   }
 
   private buildGlobe(texture: THREE.Texture, orbital: boolean) {
@@ -600,11 +605,64 @@ export class ThreeWorldRenderer {
     };
   }
 
+  /**
+   * Points the camera at a tile.
+   * The earlier transform inverted longitude and added a ninety-degree offset, which could
+   * put the requested tile on the limb or the far side of the planet; this matches the
+   * spherical surface coordinates directly so locator jumps land in the visible hemisphere.
+   */
   public focusTile(tileX: number, tileY: number, width: number, height: number) {
     const u = (tileX + 0.5) / width;
     const v = (tileY + 0.5) / height;
-    this.rotY = -(u - 0.5) * Math.PI * 2 - Math.PI / 2;
-    this.rotX = Math.max(-1.2, Math.min(1.2, (0.5 - v) * Math.PI * 0.8));
+    this.rotY = (u - 0.5) * Math.PI * 2;
+    this.rotX = Math.max(-1.1, Math.min(1.1, (0.5 - v) * Math.PI));
+  }
+
+  /**
+   * Opening framing. Rather than showing an arbitrary meridian, the camera settles on the
+   * longitude band carrying the most land, life and settlement — the part of the world most
+   * likely to make someone want to look closer.
+   */
+  public frameMostInterestingRegion(state: WorldState) {
+    const { width, height } = state.config;
+    const bandCount = Math.min(24, width);
+    const span = Math.max(1, Math.floor(width / 8));
+    let best = { x: Math.floor(width / 2), y: Math.floor(height / 2), score: -Infinity };
+
+    for (let band = 0; band < bandCount; band++) {
+      const centerX = Math.floor(((band + 0.5) / bandCount) * width) % width;
+      let score = 0;
+      let weightedY = 0;
+      let weight = 0;
+
+      for (let dx = -span; dx <= span; dx++) {
+        const x = (centerX + dx + width) % width;
+        for (let y = 0; y < height; y++) {
+          const tile = state.grid[y]?.[x];
+          if (!tile) continue;
+          // Latitude weighting keeps the framing off the poles, where the equirectangular
+          // surface is most distorted.
+          const latitudeWeight = 0.45 + Math.sin(((y + 0.5) / height) * Math.PI) * 0.55;
+          const tileScore =
+            ((tile.isWater ? 0 : 3.2) +
+              Math.min(2.5, tile.biomass / 380) +
+              tile.vegetationDensity * 1.6 +
+              (tile.settlementId ? 10 : 0) +
+              (tile.ruins.length > 0 ? 6 : 0) +
+              tile.infrastructureLevel * 1.2) *
+            latitudeWeight;
+          score += tileScore;
+          weightedY += y * Math.max(0.1, tileScore);
+          weight += Math.max(0.1, tileScore);
+        }
+      }
+
+      if (score > best.score) {
+        best = { x: centerX, y: Math.max(0, Math.min(height - 1, Math.round(weightedY / Math.max(1, weight)))), score };
+      }
+    }
+
+    this.focusTile(best.x, best.y, width, height);
   }
 
   private disposeObject(object: THREE.Object3D | null, parent?: THREE.Object3D) {

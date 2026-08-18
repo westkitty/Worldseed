@@ -54,9 +54,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       >
         <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--ws-hairline)' }}>
           <h2 className="ws-display text-[14px]" style={{ letterSpacing: '0.14em' }}>
-            SETTINGS
+            WORLDSEED Settings
           </h2>
-          <button onClick={onClose} aria-label="Close Settings" className="p-1.5 rounded-md hover:bg-white/10" style={{ color: 'var(--ws-ink-faint)' }}>
+          <button onClick={onClose} aria-label="Close settings" className="p-1.5 rounded-md hover:bg-white/10" style={{ color: 'var(--ws-ink-faint)' }}>
             <X size={16} />
           </button>
         </div>

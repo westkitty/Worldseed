@@ -5,7 +5,7 @@
 // over the world instead of walling it off behind a toolbar.
 
 import React from 'react';
-import { Play, Pause, ChevronsRight, HelpCircle, Sparkles, Compass } from 'lucide-react';
+import { Play, Pause, ChevronsRight, Sparkles, Compass } from 'lucide-react';
 import { WorldState } from '../../types/simulation';
 
 interface TimelineControlsProps {
@@ -13,7 +13,6 @@ interface TimelineControlsProps {
   onTogglePlay: () => void;
   onSetSpeed: (speed: number) => void;
   onStepYears: (years: number) => void;
-  onOpenWhy: () => void;
   onOpenWorldLab: () => void;
   onOpenDiscoveries: () => void;
 }
@@ -31,7 +30,6 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
   onTogglePlay,
   onSetSpeed,
   onStepYears,
-  onOpenWhy,
   onOpenWorldLab,
   onOpenDiscoveries
 }) => {
@@ -41,7 +39,10 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
 
   return (
     <div className="absolute inset-x-0 bottom-0 z-30 flex justify-center px-3 pb-3 pointer-events-none">
-      <div className="ws-panel pointer-events-auto flex items-center gap-2 sm:gap-3 px-2.5 py-2 max-w-full overflow-x-auto">
+      <div
+        data-testid="timeline-controls"
+        className="ws-panel pointer-events-auto flex items-center gap-2 sm:gap-3 px-2.5 py-2 max-w-full overflow-x-auto"
+      >
         {/* Clock */}
         <div
           className="flex flex-col items-start pl-1 pr-2 sm:pr-3 border-r shrink-0"
@@ -139,15 +140,6 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
 
         {/* Curiosity paths stay adjacent to time, because consequences are what they explain. */}
         <div className="flex items-center gap-1 pl-2 sm:pl-3 border-l shrink-0" style={{ borderColor: 'var(--ws-hairline)' }}>
-          <button
-            onClick={onOpenWhy}
-            className="ws-chip px-2.5 py-1.5 text-[11px] font-medium flex items-center gap-1.5"
-            style={{ color: 'var(--ws-deep-time)' }}
-            title="Trace why the world is the way it is"
-          >
-            <HelpCircle size={13} />
-            <span className="hidden sm:inline">Why?</span>
-          </button>
           <button
             onClick={onOpenWorldLab}
             className="ws-chip px-2.5 py-1.5 text-[11px] font-medium flex items-center gap-1.5"

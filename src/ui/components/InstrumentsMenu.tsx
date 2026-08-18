@@ -81,6 +81,7 @@ export const InstrumentsMenu: React.FC<InstrumentsMenuProps> = props => {
   return (
     <div ref={wrapRef} className="relative">
       <button
+        data-testid="world-tools-button"
         onClick={() => setOpen(v => !v)}
         aria-expanded={open}
         aria-haspopup="menu"
@@ -95,6 +96,7 @@ export const InstrumentsMenu: React.FC<InstrumentsMenuProps> = props => {
       {open && (
         <div
           role="menu"
+          data-testid="world-tools-panel"
           className="ws-panel ws-rise absolute right-0 top-11 w-[268px] p-2 z-50 max-h-[70vh] overflow-y-auto"
           style={{ background: 'var(--ws-surface-strong)' }}
         >

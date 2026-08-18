@@ -19,6 +19,19 @@ page.on('console', msg => {
   if (msg.type() === 'error') runtimeErrors.push(`console: ${msg.text()}`);
 });
 
+// Silence is the default ambience. Counting oscillator construction proves no continuous
+// drone can be reintroduced without this failing.
+await page.addInitScript(() => {
+  window.__worldseedOscillatorCount = 0;
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return;
+  const originalCreateOscillator = AudioCtor.prototype.createOscillator;
+  AudioCtor.prototype.createOscillator = function (...args) {
+    window.__worldseedOscillatorCount += 1;
+    return originalCreateOscillator.apply(this, args);
+  };
+});
+
 const fail = message => { throw new Error(message); };
 
 // The visible clock abbreviates deep time ("1.4M yr"), so the exact value is read from the
@@ -41,6 +54,13 @@ try {
   const introDismiss = page.getByRole('button', { name: 'Dismiss introduction' });
   if (await introDismiss.count()) await introDismiss.click();
   await page.waitForTimeout(200);
+
+  // Tab belongs to the browser: it must move focus through real controls and must not be
+  // hijacked as an application shortcut.
+  await page.keyboard.press('Tab');
+  const focusedAfterTab = await page.evaluate(() => ({ tag: document.activeElement?.tagName }));
+  if (!focusedAfterTab.tag || focusedAfterTab.tag === 'BODY') fail('Tab did not move focus into the interface.');
+  if (await page.getByText('OBSERVATION MODE', { exact: true }).count()) fail('Tab still incorrectly toggles Immersion Mode.');
   await page.screenshot({ path: `${outDir}/01-default-globe.png`, fullPage: true });
 
   const viewSelectIndex = await page.locator('select').evaluateAll(selects =>
@@ -57,6 +77,28 @@ try {
 
   const rootBox = await page.locator('#root').boundingBox();
   if (!rootBox) fail('Application root has no visible bounding box.');
+
+  // World-first contract: the default view is the Globe, the world dominates the viewport,
+  // the permanent chrome stays small, and secondary tools stay hidden until asked for.
+  if ((await viewSelect.inputValue()) !== 'GLOBE') fail('WORLDSEED must open world-first in the Globe view.');
+  const defaultCanvas = page.locator('canvas[data-worldseed-renderer="three"]');
+  await defaultCanvas.waitFor({ state: 'visible', timeout: 10_000 });
+  const defaultCanvasBox = await defaultCanvas.boundingBox();
+  if (!defaultCanvasBox) fail('Default WebGL world canvas is missing.');
+  if (defaultCanvasBox.width / rootBox.width < 0.9 || defaultCanvasBox.height / rootBox.height < 0.85) {
+    fail(`World surface does not dominate the viewport: ${defaultCanvasBox.width}x${defaultCanvasBox.height} inside ${rootBox.width}x${rootBox.height}.`);
+  }
+  const timeline = page.getByTestId('timeline-controls');
+  const timelineBox = await timeline.boundingBox();
+  if (!timelineBox || timelineBox.height > 96 || timelineBox.width > rootBox.width * 0.72) {
+    fail('Timeline controls are too invasive for the world-first interface.');
+  }
+  if (await timeline.getByText('Why?', { exact: true }).count()) {
+    fail('Timeline still exposes an unscoped WHY action without a selected causal subject.');
+  }
+  if (await page.getByText('Tree of Life', { exact: true }).count()) {
+    fail('Secondary dashboard tools are visible before the user asks for them.');
+  }
 
   await viewSelect.selectOption('FLAT_ATLAS');
   await page.waitForTimeout(400);
@@ -134,15 +176,21 @@ try {
   // class, so the check survives visual changes and still proves the control is authoritative.
   const speedButton = page.getByRole('button', { name: '20×' });
   if ((await speedButton.getAttribute('aria-pressed')) !== 'true') fail('20× speed selection did not remain active after simulation ticks.');
+  const oscillatorsAfter = await page.evaluate(() => window.__worldseedOscillatorCount || 0);
+  if (oscillatorsAfter !== 0) fail('Running time unexpectedly created continuous audio oscillators.');
   await page.getByRole('button', { name: 'Pause Time' }).click();
 
   // Real IndexedDB/UI persistence round trip: save, mutate time, load the save, and prove
   // the authoritative engine state returns to the saved year.
   const savedYear = await readYear();
   const openSaves = async () => {
-    await page.getByRole('button', { name: 'Instruments' }).click();
-    await page.getByRole('menuitem', { name: /Saves/ }).click();
+    await page.getByTestId('world-tools-button').click();
+    await page.getByTestId('world-tools-panel').getByRole('menuitem', { name: /Saves/ }).click();
   };
+
+  // No audio may exist until the user explicitly enables it.
+  const oscillatorsBefore = await page.evaluate(() => window.__worldseedOscillatorCount || 0);
+  if (oscillatorsBefore !== 0) fail(`Audio oscillator created before explicit audio enable: ${oscillatorsBefore}.`);
 
   await openSaves();
   await page.getByPlaceholder('Enter save slot name...').fill('Browser E2E Checkpoint');
@@ -156,8 +204,13 @@ try {
 
   await openSaves();
   await page.getByRole('button', { name: 'Load' }).first().click();
-  await page.waitForTimeout(200);
-  const restoredYear = await readYear();
+  await page.getByLabel('Close Saves').waitFor({ state: 'hidden', timeout: 15_000 }).catch(() => {});
+  const deadline = Date.now() + 15_000;
+  let restoredYear = await readYear();
+  while (restoredYear !== savedYear && Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    restoredYear = await readYear();
+  }
   if (restoredYear !== savedYear) fail(`Save/load round trip restored year ${restoredYear}, expected ${savedYear}.`);
 
   // Selection must reach the inspector and the world at the same time.
@@ -175,8 +228,17 @@ try {
     await page.keyboard.press('Escape');
   }
 
+  // Settings must expose only controls that do something.
+  await page.getByTestId('world-tools-button').click();
+  await page.getByTestId('world-tools-panel').getByRole('menuitem', { name: /Settings/ }).click();
+  await page.getByText('WORLDSEED Settings', { exact: true }).waitFor({ state: 'visible', timeout: 5_000 });
+  for (const fake of ['Zoom Sensitivity', 'Quality & Performance Presets', 'Pan Sensitivity', 'Invert Zoom']) {
+    if (await page.getByText(fake, { exact: true }).count()) fail(`Cosmetic setting "${fake}" is still exposed.`);
+  }
+  await page.getByLabel('Close settings').click();
+
   // Secondary tools must stay reachable but subordinate.
-  await page.getByRole('button', { name: 'Instruments' }).click();
+  await page.getByTestId('world-tools-button').click();
   await page.waitForTimeout(150);
   await page.screenshot({ path: `${outDir}/12-instruments.png`, fullPage: true });
   await page.keyboard.press('Escape');
@@ -209,6 +271,8 @@ try {
     continuousSimulationYearsAdvanced: afterYear - beforeYear,
     persistenceRoundTrip: { savedYear, mutatedYear, restoredYear, verdict: 'PASS' },
     liveCanvasesAfterViewTorture: canvasCount,
+    audioOscillatorsCreated: oscillatorsAfter,
+    worldFirstContract: 'PASS',
     narrowViewportControls: 'PASS',
     runtimeErrors,
     verdict: 'PASS'

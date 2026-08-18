@@ -174,13 +174,33 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (state.isPaused) return;
-    const intervalMs = Math.max(20, Math.floor(1000 / state.simulationSpeed));
-    const stepCount = state.simulationSpeed > 100 ? 5 : 1;
-    const interval = window.setInterval(() => {
-      if (!engineRef.current) return;
-      setState({ ...engineRef.current.step(stepCount) });
-    }, intervalMs);
-    return () => window.clearInterval(interval);
+
+    // Simulation advances from elapsed wall-clock time on animation frames, not from timer
+    // callbacks. Throttled or dropped frames then slow the apparent rate instead of silently
+    // changing how many years each tick covers.
+    const clock = { lastNow: performance.now(), fractionalYears: 0 };
+    let frameId = 0;
+
+    const tick = (now: number) => {
+      const engine = engineRef.current;
+      if (!engine) return;
+
+      const elapsedMs = Math.max(0, Math.min(1000, now - clock.lastNow));
+      clock.lastNow = now;
+      clock.fractionalYears += (elapsedMs * state.simulationSpeed) / 1000;
+
+      const wholeYears = Math.floor(clock.fractionalYears);
+      if (wholeYears > 0) {
+        const yearsToAdvance = Math.min(50, wholeYears);
+        clock.fractionalYears -= yearsToAdvance;
+        setState({ ...engine.step(yearsToAdvance) });
+      }
+
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
   }, [state.isPaused, state.simulationSpeed]);
 
   // Later starting eras simulate real centuries before the first frame. Generation is
@@ -203,7 +223,8 @@ export const App: React.FC = () => {
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement
+        e.target instanceof HTMLSelectElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
       ) {
         return;
       }
@@ -214,12 +235,9 @@ export const App: React.FC = () => {
         return;
       }
 
-      if (e.key === 'Tab') {
-        // Tab toggles Immersion Mode only while no dialog owns focus, so normal tab
-        // navigation still works everywhere it matters.
-        if (activeModal) return;
+      if (e.key === '/') {
         e.preventDefault();
-        setIsImmersionMode(prev => !prev);
+        setSearchOpen(true);
         return;
       }
 
@@ -247,7 +265,7 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeModal, handleTogglePlay, handleSetSpeed, viewMode]);
+  }, [handleTogglePlay, handleSetSpeed, viewMode]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -483,7 +501,6 @@ export const App: React.FC = () => {
             }}
             onSetSpeed={handleSetSpeed}
             onStepYears={handleStepYears}
-            onOpenWhy={() => handleOpenWhy()}
             onOpenWorldLab={() => setActiveModal('WORLD_LAB')}
             onOpenDiscoveries={() => setActiveModal('DISCOVERIES')}
           />
