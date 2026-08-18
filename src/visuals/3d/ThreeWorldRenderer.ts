@@ -1,10 +1,9 @@
 // WORLDSEED — performance-first WebGL hero renderer.
 //
-// The simulation grid is deliberately low resolution (64×48 by default). This renderer does
-// not pretend otherwise by piling high-frequency normal maps over it. Instead it turns the
-// real fields into a clean planetary atlas: continuous hypsometric colour, restrained terrain
-// relief, a separate water surface, soft climate clouds and quiet observatory lighting.
-// Static views render only when something visible changes.
+// The simulation grid is deliberately low resolution (64×48 by default). The globe therefore
+// uses an intentional atlas treatment instead of faux-photoreal material noise: continuous
+// climate/elevation colour, a restrained water shell, subtle real macro-relief and soft clouds.
+// Static hero views render only when something visible changes.
 
 import * as THREE from 'three';
 import { Tile, WorldState, WorldViewMode } from '../../types/simulation';
@@ -28,21 +27,21 @@ const smoothstep = (a: number, b: number, x: number) => {
 type RGB = [number, number, number];
 
 const BIOME: Record<string, RGB> = {
-  DEEP_OCEAN: [8, 29, 52],
-  SHALLOW_OCEAN: [27, 91, 121],
-  HYDROTHERMAL_RIFT: [74, 38, 49],
-  COASTAL_REEF: [48, 121, 127],
-  TUNDRA: [134, 143, 140],
-  TAIGA: [47, 74, 60],
-  TEMPERATE_FOREST: [54, 91, 49],
-  TEMPERATE_GRASSLAND: [111, 125, 69],
-  TROPICAL_RAINFOREST: [38, 82, 43],
-  SAVANNA: [150, 130, 72],
-  HOT_DESERT: [182, 151, 99],
-  COLD_DESERT: [128, 130, 124],
-  WETLAND: [64, 99, 79],
-  ALPINE: [162, 168, 174],
-  VOLCANIC_BARREN: [67, 58, 54]
+  DEEP_OCEAN: [10, 34, 56],
+  SHALLOW_OCEAN: [31, 92, 112],
+  HYDROTHERMAL_RIFT: [77, 44, 50],
+  COASTAL_REEF: [50, 116, 119],
+  TUNDRA: [132, 141, 139],
+  TAIGA: [50, 73, 61],
+  TEMPERATE_FOREST: [57, 88, 52],
+  TEMPERATE_GRASSLAND: [111, 121, 73],
+  TROPICAL_RAINFOREST: [42, 80, 47],
+  SAVANNA: [146, 127, 77],
+  HOT_DESERT: [173, 146, 100],
+  COLD_DESERT: [128, 130, 126],
+  WETLAND: [67, 96, 80],
+  ALPINE: [153, 159, 163],
+  VOLCANIC_BARREN: [70, 61, 57]
 };
 
 function hash(seed: number, x: number, y: number, channel = 0): number {
@@ -164,7 +163,7 @@ export class ThreeWorldRenderer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.3));
     this.renderer.setSize(width, height, false);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.96;
+    this.renderer.toneMappingExposure = 1;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.domElement.dataset.worldseedRenderer = 'three';
     this.renderer.domElement.style.display = 'block';
@@ -177,15 +176,12 @@ export class ThreeWorldRenderer {
     this.worldGroup = new THREE.Group();
     this.scene.add(this.worldGroup);
 
-    // Broad, soft light. The earlier hard sun + glossy water produced a giant white disc and
-    // crushed half of the planet into black. This is intentionally closer to atlas lighting.
-    this.scene.add(new THREE.HemisphereLight(0x71869b, 0x10151c, 1.18));
-    const sun = new THREE.DirectionalLight(0xffecd1, 1.35);
+    // Non-map objects still need light. The planetary surface itself uses baked atlas shading,
+    // which avoids the half-black globe and grid-shaped geometry shadows of the old version.
+    this.scene.add(new THREE.HemisphereLight(0x8ea2b4, 0x26333f, 1.35));
+    const sun = new THREE.DirectionalLight(0xffecd1, 0.85);
     sun.position.set(-24, 36, 52);
     this.scene.add(sun);
-    const fill = new THREE.DirectionalLight(0x6686a3, 0.22);
-    fill.position.set(28, -18, -34);
-    this.scene.add(fill);
 
     this.createStarfield();
     this.requestRender();
@@ -211,8 +207,8 @@ export class ThreeWorldRenderer {
         new THREE.PointsMaterial({ color, size, sizeAttenuation: false, transparent: true, opacity, depthWrite: false })
       );
     };
-    group.add(layer(1350, 1.0, 0.38, 9143, 0xe9f2ff));
-    group.add(layer(125, 1.8, 0.68, 2279, 0xfff3de));
+    group.add(layer(1350, 1.0, 0.36, 9143, 0xe9f2ff));
+    group.add(layer(125, 1.8, 0.64, 2279, 0xfff3de));
     this.starfield = group;
     this.scene.add(group);
   }
@@ -287,6 +283,8 @@ export class ThreeWorldRenderer {
       }
     }
 
+    // Very soft hillshade. The old coefficients exposed every coarse simulation cell as a
+    // vertical stripe. Here it is merely tonal structure behind the atlas colours.
     for (let y = 0; y < h; y++) {
       const ym = Math.max(0, y - 1);
       const yp = Math.min(h - 1, y + 1);
@@ -295,7 +293,7 @@ export class ThreeWorldRenderer {
         const xp = (x + 1) % w;
         const dx = this.elevation[y * w + xm] - this.elevation[y * w + xp];
         const dy = this.elevation[ym * w + x] - this.elevation[yp * w + x];
-        this.shade[y * w + x] = clamp(0.99 + dx * 1.0 + dy * 0.82, 0.8, 1.14);
+        this.shade[y * w + x] = clamp(1 + dx * 0.34 + dy * 0.28, 0.95, 1.05);
       }
     }
   }
@@ -314,11 +312,7 @@ export class ThreeWorldRenderer {
     const xb = ((x0 + 1) % w + w) % w;
     const ya = clamp(y0, 0, h - 1);
     const yb = clamp(y0 + 1, 0, h - 1);
-    return lerp(
-      lerp(field[ya * w + xa], field[ya * w + xb], dx),
-      lerp(field[yb * w + xa], field[yb * w + xb], dx),
-      dy
-    );
+    return lerp(lerp(field[ya * w + xa], field[ya * w + xb], dx), lerp(field[yb * w + xa], field[yb * w + xb], dx), dy);
   }
 
   private tileAt(state: WorldState, tx: number, ty: number): Tile {
@@ -342,7 +336,6 @@ export class ThreeWorldRenderer {
       [((x0 % w) + w) % w, clamp(y0 + 1, 0, h - 1), (1 - dx) * dy],
       [((x0 + 1) % w + w) % w, clamp(y0 + 1, 0, h - 1), dx * dy]
     ] as const;
-
     let r = 0;
     let g = 0;
     let b = 0;
@@ -418,82 +411,80 @@ export class ThreeWorldRenderer {
     }
   }
 
+  private visualElevation(state: WorldState, tx: number, ty: number): number {
+    const raw = this.sampleField(this.elevation, tx, ty);
+    const sea = state.config.seaLevel;
+    const coast = 1 - smoothstep(0.025, 0.11, Math.abs(raw - sea));
+    const n = valueNoise(state.config.seed, tx * 0.72, ty * 0.72, 61) - 0.5;
+    return raw + n * 0.032 * coast;
+  }
+
   private physicalColor(state: WorldState, tx: number, ty: number, px: number, py: number): [number, number, number, boolean] {
     const sea = state.config.seaLevel;
-    const e = this.sampleField(this.elevation, tx, ty);
+    const e = this.visualElevation(state, tx, ty);
     const water = e < sea;
 
     if (water) {
-      const depth = clamp01((sea - e) / Math.max(0.24, sea + 0.28));
-      const coast: RGB = [33, 104, 130];
-      const deep: RGB = [7, 29, 53];
-      const grain = (valueNoise(state.config.seed, px / 15, py / 15, 71) - 0.5) * 4;
+      // Only the coastal shelf is revealed. Deep-bathymetry stripes were technically data but
+      // visually dominated the atlas, so open ocean deliberately settles into one dark field.
+      const depth = clamp01((sea - e) / 0.22);
+      const t = smoothstep(0.02, 0.68, depth);
+      const grain = (valueNoise(state.config.seed, px / 18, py / 18, 71) - 0.5) * 1.5;
       return [
-        Math.round(lerp(coast[0], deep[0], smoothstep(0.04, 0.72, depth)) + grain),
-        Math.round(lerp(coast[1], deep[1], smoothstep(0.04, 0.72, depth)) + grain),
-        Math.round(lerp(coast[2], deep[2], smoothstep(0.04, 0.72, depth)) + grain),
+        Math.round(lerp(31, 11, t) + grain),
+        Math.round(lerp(95, 40, t) + grain),
+        Math.round(lerp(116, 65, t) + grain),
         true
       ];
     }
 
-    // Continuous climate colours do most of the work. Biome classification remains visible as
-    // a restrained tint, rather than as the giant rectangular colour blocks seen in the old
-    // screenshot.
     const temp = this.sampleField(this.temperature, tx, ty);
     const moisture = clamp01(this.sampleField(this.moisture, tx, ty));
     const vegetation = clamp01(this.sampleField(this.vegetation, tx, ty));
     const elevation01 = clamp01((e - sea) / Math.max(0.08, 1 - sea));
     const shade = this.sampleField(this.shade, tx, ty);
-    const lush = clamp01(vegetation * 0.72 + moisture * 0.42);
-    const cold = clamp01((7 - temp) / 34);
-    const high = smoothstep(0.48, 0.88, elevation01);
-    const snow = clamp01(smoothstep(0.8, 0.98, elevation01) + smoothstep(-7, -24, temp));
-
-    const dry: RGB = [161, 137, 89];
-    const wet: RGB = [49, 91, 55];
-    const cool: RGB = [106, 118, 116];
-    const rock: RGB = [121, 119, 112];
-    const ice: RGB = [211, 217, 220];
+    const lush = clamp01(vegetation * 0.7 + moisture * 0.4);
+    const cold = clamp01((5 - temp) / 38);
+    const high = smoothstep(0.54, 0.92, elevation01);
+    const snow = clamp01(smoothstep(0.86, 0.99, elevation01) + smoothstep(-10, -28, temp));
     const biome = this.blendedLandBiome(state, tx, ty);
 
-    let r = lerp(dry[0], wet[0], lush);
-    let g = lerp(dry[1], wet[1], lush);
-    let b = lerp(dry[2], wet[2], lush);
-    r = lerp(r, cool[0], cold * 0.7);
-    g = lerp(g, cool[1], cold * 0.7);
-    b = lerp(b, cool[2], cold * 0.7);
-    r = lerp(r, rock[0], high * 0.64);
-    g = lerp(g, rock[1], high * 0.64);
-    b = lerp(b, rock[2], high * 0.64);
-    r = lerp(r, biome[0], 0.24);
-    g = lerp(g, biome[1], 0.24);
-    b = lerp(b, biome[2], 0.24);
-    r = lerp(r, ice[0], snow * 0.74);
-    g = lerp(g, ice[1], snow * 0.74);
-    b = lerp(b, ice[2], snow * 0.74);
+    let r = lerp(157, 53, lush);
+    let g = lerp(135, 89, lush);
+    let b = lerp(92, 58, lush);
+    r = lerp(r, 108, cold * 0.5);
+    g = lerp(g, 119, cold * 0.5);
+    b = lerp(b, 120, cold * 0.5);
+    r = lerp(r, 125, high * 0.42);
+    g = lerp(g, 123, high * 0.42);
+    b = lerp(b, 118, high * 0.42);
+    r = lerp(r, biome[0], 0.12);
+    g = lerp(g, biome[1], 0.12);
+    b = lerp(b, biome[2], 0.12);
+    r = lerp(r, 188, snow * 0.46);
+    g = lerp(g, 194, snow * 0.46);
+    b = lerp(b, 198, snow * 0.46);
 
-    const grain = (valueNoise(state.config.seed, px / 9, py / 9, 89) - 0.5) * 0.045;
-    const contourPhase = Math.abs((((e - sea) * 15) % 1 + 1) % 1 - 0.5);
-    const contour = contourPhase > 0.47 && elevation01 > 0.08 ? 0.95 : 1;
+    const grain = (valueNoise(state.config.seed, px / 11, py / 11, 89) - 0.5) * 0.025;
+    const contourPhase = Math.abs((((e - sea) * 14) % 1 + 1) % 1 - 0.5);
+    const contour = contourPhase > 0.478 && elevation01 > 0.1 ? 0.97 : 1;
     const factor = shade * (1 + grain) * contour;
     r *= factor;
     g *= factor;
     b *= factor;
 
-    const coastBand = 1 - smoothstep(0.006, 0.028, Math.abs(e - sea));
+    const coastBand = 1 - smoothstep(0.006, 0.026, Math.abs(e - sea));
     if (coastBand > 0) {
-      r = lerp(r, 177, coastBand * 0.28);
-      g = lerp(g, 154, coastBand * 0.28);
-      b = lerp(b, 105, coastBand * 0.28);
+      r = lerp(r, 171, coastBand * 0.24);
+      g = lerp(g, 149, coastBand * 0.24);
+      b = lerp(b, 104, coastBand * 0.24);
     }
-
     return [Math.round(r), Math.round(g), Math.round(b), false];
   }
 
   private paintSurface(state: WorldState, layer: SurfaceLayer) {
     this.ensureRasterResources();
     this.ensureFields(state);
-
     const surfaceCtx = this.surfaceCanvas!.getContext('2d')!;
     const waterCtx = this.waterCanvas!.getContext('2d')!;
     const surface = surfaceCtx.createImageData(SURFACE_W, SURFACE_H);
@@ -509,13 +500,12 @@ export class ThreeWorldRenderer {
         const i = (y * SURFACE_W + x) * 4;
         const [pr, pg, pb, isWater] = this.physicalColor(state, tx, ty, x, y);
         const thematic = physical ? null : this.thematicColor(state, tx, ty, layer);
-        const blend = thematic ? (layer === 'BIOMES' ? 0.72 : 0.84) : 0;
+        const blend = thematic ? (layer === 'BIOMES' ? 0.7 : 0.84) : 0;
         const dim = !physical && !thematic ? 0.58 : 1;
         surface.data[i] = clamp(Math.round(lerp(pr, thematic?.[0] ?? pr, blend) * dim), 0, 255);
         surface.data[i + 1] = clamp(Math.round(lerp(pg, thematic?.[1] ?? pg, blend) * dim), 0, 255);
         surface.data[i + 2] = clamp(Math.round(lerp(pb, thematic?.[2] ?? pb, blend) * dim), 0, 255);
         surface.data[i + 3] = 255;
-
         const mask = isWater ? 255 : 0;
         water.data[i] = mask;
         water.data[i + 1] = mask;
@@ -526,8 +516,6 @@ export class ThreeWorldRenderer {
     surfaceCtx.putImageData(surface, 0, 0);
     waterCtx.putImageData(water, 0, 0);
 
-    // Climate cloud field uses smoothly sampled moisture plus continuous value noise, so it
-    // reads as weather rather than another copy of the tile grid.
     const cloudCtx = this.cloudCanvas!.getContext('2d')!;
     const clouds = cloudCtx.createImageData(CLOUD_W, CLOUD_H);
     const seed = state.config.seed | 0;
@@ -550,7 +538,6 @@ export class ThreeWorldRenderer {
       }
     }
     cloudCtx.putImageData(clouds, 0, 0);
-
     this.surfaceTexture!.needsUpdate = true;
     this.waterTexture!.needsUpdate = true;
     this.cloudTexture!.needsUpdate = true;
@@ -607,14 +594,12 @@ export class ThreeWorldRenderer {
     const sea = state.config.seaLevel;
     const north = this.averageElevationAtLatitude(0.5);
     const south = this.averageElevationAtLatitude(this.fieldHeight - 0.5);
-
     for (let i = 0; i < pos.count; i++) {
       const u = uv.getX(i);
       const v = uv.getY(i);
       const ty = (1 - v) * state.config.height;
       let e = this.sampleField(this.elevation, u * state.config.width, ty);
-      const poleDistance = Math.min(v, 1 - v);
-      const poleBlend = smoothstep(0, 0.11, poleDistance);
+      const poleBlend = smoothstep(0, 0.11, Math.min(v, 1 - v));
       e = lerp(v > 0.5 ? north : south, e, poleBlend);
       const rel = clamp01((e - sea) / Math.max(0.05, 1 - sea));
       const radius = baseRadius + Math.pow(rel, 1.35) * strength;
@@ -631,23 +616,20 @@ export class ThreeWorldRenderer {
 
   private buildPlanetSphere(state: WorldState, radius: number, widthSegments: number, heightSegments: number) {
     const geometry = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
-    this.displaceSphere(geometry, state, radius, radius === GLOBE_RADIUS ? 0.34 : 0.25);
-    this.surfaceMesh = new THREE.Mesh(
-      geometry,
-      new THREE.MeshStandardMaterial({ map: this.surfaceTexture, roughness: 0.9, metalness: 0 })
-    );
+    this.displaceSphere(geometry, state, radius, radius === GLOBE_RADIUS ? 0.09 : 0.07);
+    // The colour texture already includes gentle hillshade and contour structure. BasicMaterial
+    // keeps every hemisphere readable and is cheaper than a physically-lit land shader.
+    this.surfaceMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: this.surfaceTexture }));
     this.worldGroup!.add(this.surfaceMesh);
 
-    // Very restrained water gloss. The earlier low-roughness shell produced an enormous white
-    // hotspot that looked like a flashlight pointed at plastic.
     this.oceanMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(radius * 1.0018, Math.max(56, Math.floor(widthSegments * 0.72)), Math.max(36, Math.floor(heightSegments * 0.72))),
+      new THREE.SphereGeometry(radius * 1.0015, Math.max(56, Math.floor(widthSegments * 0.72)), Math.max(36, Math.floor(heightSegments * 0.72))),
       new THREE.MeshStandardMaterial({
-        color: 0x3a7894,
+        color: 0x548397,
         alphaMap: this.waterTexture,
         transparent: true,
-        opacity: 0.32,
-        roughness: 0.68,
+        opacity: 0.11,
+        roughness: 0.9,
         metalness: 0,
         depthWrite: false
       })
@@ -661,15 +643,15 @@ export class ThreeWorldRenderer {
     this.buildPlanetSphere(state, GLOBE_RADIUS, orbital ? 88 : 96, orbital ? 56 : 64);
 
     this.atmosphereMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(GLOBE_RADIUS * 1.035, 48, 32),
+      new THREE.SphereGeometry(GLOBE_RADIUS * 1.032, 48, 32),
       new THREE.ShaderMaterial({
         transparent: true,
         side: THREE.BackSide,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         uniforms: {
-          uColor: { value: new THREE.Color(0x80acc8) },
-          uIntensity: { value: orbital ? 0.28 : 0.2 }
+          uColor: { value: new THREE.Color(0x83a9bf) },
+          uIntensity: { value: orbital ? 0.22 : 0.14 }
         },
         vertexShader: `
           varying vec3 vN;
@@ -697,15 +679,13 @@ export class ThreeWorldRenderer {
     this.worldGroup.add(this.atmosphereMesh);
 
     this.cloudMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(GLOBE_RADIUS * 1.012, 60, 40),
-      new THREE.MeshStandardMaterial({
-        color: 0xf0f3f4,
+      new THREE.SphereGeometry(GLOBE_RADIUS * 1.011, 60, 40),
+      new THREE.MeshBasicMaterial({
+        color: 0xe8edef,
         alphaMap: this.cloudTexture,
         transparent: true,
-        opacity: 0.2,
-        depthWrite: false,
-        roughness: 1,
-        metalness: 0
+        opacity: 0.11,
+        depthWrite: false
       })
     );
     this.cloudMesh.renderOrder = 3;
@@ -765,10 +745,10 @@ export class ThreeWorldRenderer {
       new THREE.MeshPhysicalMaterial({
         color: 0xeaf5ff,
         transparent: true,
-        opacity: 0.12,
-        roughness: 0.08,
-        transmission: 0.82,
-        thickness: 1.1,
+        opacity: 0.1,
+        roughness: 0.1,
+        transmission: 0.8,
+        thickness: 1,
         ior: 1.4,
         depthWrite: false
       })
@@ -807,7 +787,7 @@ export class ThreeWorldRenderer {
     const segY = Math.max(71, state.config.height * 2 - 1);
     this.reliefMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(spanX, spanZ, segX, segY),
-      new THREE.MeshStandardMaterial({ map: this.surfaceTexture, roughness: 0.9, metalness: 0 })
+      new THREE.MeshStandardMaterial({ map: this.surfaceTexture, roughness: 0.94, metalness: 0 })
     );
     this.reliefMesh.rotation.x = -Math.PI / 2;
     this.updateReliefGeometry(state);
@@ -815,17 +795,17 @@ export class ThreeWorldRenderer {
 
     this.oceanPlane = new THREE.Mesh(
       new THREE.PlaneGeometry(spanX, spanZ),
-      new THREE.MeshStandardMaterial({ color: 0x285e78, transparent: true, opacity: 0.48, roughness: 0.7, depthWrite: false })
+      new THREE.MeshStandardMaterial({ color: 0x285e78, transparent: true, opacity: 0.38, roughness: 0.8, depthWrite: false })
     );
     this.oceanPlane.rotation.x = -Math.PI / 2;
-    this.oceanPlane.position.y = 0.015;
+    this.oceanPlane.position.y = 0.01;
     this.worldGroup.add(this.oceanPlane);
 
     const slab = new THREE.Mesh(
-      new THREE.BoxGeometry(spanX * 1.015, 1.8, spanZ * 1.015),
-      new THREE.MeshStandardMaterial({ color: 0x20262e, roughness: 0.92, metalness: 0 })
+      new THREE.BoxGeometry(spanX * 1.015, 1.6, spanZ * 1.015),
+      new THREE.MeshStandardMaterial({ color: 0x20262e, roughness: 0.94, metalness: 0 })
     );
-    slab.position.y = -1.05;
+    slab.position.y = -0.95;
     this.baseObject = slab;
     this.worldGroup.add(slab);
   }
@@ -841,7 +821,7 @@ export class ThreeWorldRenderer {
       const ty = (1 - uv.getY(i)) * state.config.height;
       const e = this.sampleField(this.elevation, tx, ty);
       const rel = e - sea;
-      pos.setZ(i, rel >= 0 ? rel * 2.6 : rel * 0.85);
+      pos.setZ(i, rel >= 0 ? rel * 1.6 : rel * 0.45);
     }
     pos.needsUpdate = true;
     geometry.computeVertexNormals();
@@ -860,12 +840,12 @@ export class ThreeWorldRenderer {
       case 'GLOBE':
         this.targetZoom = this.distanceToFit(GLOBE_RADIUS, 1.32);
         this.rotX = 0.2;
-        this.verticalBias = 0.65;
+        this.verticalBias = 0.55;
         break;
       case 'ORBITAL_VIEW':
         this.targetZoom = this.distanceToFit(GLOBE_RADIUS, 2.5);
         this.rotX = 0.12;
-        this.verticalBias = 0.45;
+        this.verticalBias = 0.4;
         break;
       case 'SNOW_GLOBE':
         this.targetZoom = this.distanceToFit(SNOW_RADIUS * 1.4, 1.5);
@@ -873,8 +853,8 @@ export class ThreeWorldRenderer {
         this.verticalBias = 0;
         break;
       default:
-        this.targetZoom = this.distanceToFit(23, 1.16);
-        this.rotX = 0.55;
+        this.targetZoom = this.distanceToFit(23, 1.18);
+        this.rotX = 0.5;
         this.verticalBias = 0;
         break;
     }
@@ -904,7 +884,6 @@ export class ThreeWorldRenderer {
     this.animationLast = 0;
     if (this.reducedMotion) return;
     if (this.currentViewMode !== 'SNOW_GLOBE' && this.currentViewMode !== 'ORBITAL_VIEW') return;
-
     const tick = (now: number) => {
       this.animationFrame = requestAnimationFrame(tick);
       if (!this.animationLast) this.animationLast = now;
@@ -941,14 +920,12 @@ export class ThreeWorldRenderer {
     if (key === this.selectionKey) return;
     this.selectionKey = key;
     if (!this.worldGroup) return;
-
     if (!tile) {
       if (this.selectionMarker) this.disposeObject(this.selectionMarker);
       this.selectionMarker = null;
       this.requestRender();
       return;
     }
-
     if (!this.selectionMarker) {
       this.selectionMarker = new THREE.Mesh(
         new THREE.RingGeometry(0.56, 0.8, 28),
@@ -966,7 +943,7 @@ export class ThreeWorldRenderer {
       const rel = e - state.config.seaLevel;
       this.selectionMarker.position.set(
         (u - 0.5) * geo.parameters.width,
-        (rel >= 0 ? rel * 2.6 : rel * 0.85) + 0.2,
+        (rel >= 0 ? rel * 1.6 : rel * 0.45) + 0.18,
         (v - 0.5) * geo.parameters.height
       );
       this.selectionMarker.rotation.set(-Math.PI / 2, 0, 0);
@@ -974,8 +951,8 @@ export class ThreeWorldRenderer {
       const base = (this.surfaceMesh.geometry as THREE.SphereGeometry).parameters.radius;
       const e = this.sampleField(this.elevation, tile.x + 0.5, tile.y + 0.5);
       const rel = clamp01((e - state.config.seaLevel) / Math.max(0.05, 1 - state.config.seaLevel));
-      const reliefStrength = base === GLOBE_RADIUS ? 0.34 : 0.25;
-      const radius = base + Math.pow(rel, 1.35) * reliefStrength + 0.1;
+      const reliefStrength = base === GLOBE_RADIUS ? 0.09 : 0.07;
+      const radius = base + Math.pow(rel, 1.35) * reliefStrength + 0.08;
       const lon = (u - 0.5) * Math.PI * 2;
       const lat = (0.5 - v) * Math.PI;
       const normal = new THREE.Vector3(
@@ -1010,7 +987,7 @@ export class ThreeWorldRenderer {
     const u = (tileX + 0.5) / width;
     const v = (tileY + 0.5) / height;
     this.rotY = (u - 0.5) * Math.PI * 2;
-    this.rotX = clamp((0.5 - v) * Math.PI, -1.08, 1.08);
+    this.rotX = clamp((0.5 - v) * Math.PI, -1.3, 1.3);
     this.requestRender();
   }
 
@@ -1021,7 +998,6 @@ export class ThreeWorldRenderer {
     let bestX = Math.floor(width / 2);
     let bestY = Math.floor(height / 2);
     let bestScore = -Infinity;
-
     for (let band = 0; band < bands; band++) {
       const cx = Math.floor(((band + 0.5) / bands) * width) % width;
       let score = 0;
@@ -1032,14 +1008,9 @@ export class ThreeWorldRenderer {
         for (let y = 0; y < height; y++) {
           const tile = state.grid[y]?.[x];
           if (!tile) continue;
-          const latitude = 0.45 + Math.sin(((y + 0.5) / height) * Math.PI) * 0.55;
+          const latitude = 0.4 + Math.sin(((y + 0.5) / height) * Math.PI) * 0.6;
           const tileScore =
-            ((tile.isWater ? 0 : 3) +
-              Math.min(2.4, tile.biomass / 400) +
-              tile.vegetationDensity * 1.25 +
-              (tile.settlementId ? 9 : 0) +
-              (tile.ruins.length ? 5 : 0)) *
-            latitude;
+            ((tile.isWater ? 0 : 3.4) + Math.min(2.2, tile.biomass / 420) + tile.vegetationDensity * 1.1 + (tile.settlementId ? 9 : 0) + (tile.ruins.length ? 5 : 0)) * latitude;
           score += tileScore;
           weightedY += y * Math.max(0.1, tileScore);
           weight += Math.max(0.1, tileScore);
@@ -1067,16 +1038,16 @@ export class ThreeWorldRenderer {
 
   public rotate(deltaX: number, deltaY: number) {
     this.rotY += deltaX * 0.008;
-    this.rotX = clamp(this.rotX + deltaY * 0.008, -1.3, 1.3);
+    this.rotX = clamp(this.rotX + deltaY * 0.008, -1.32, 1.32);
     this.requestRender();
   }
 
   public zoom(delta: number) {
     const relief = !!this.reliefMesh;
     const snow = this.currentViewMode === 'SNOW_GLOBE';
-    const min = relief ? 31 : snow ? 34 : 38;
+    const min = relief ? 34 : snow ? 36 : 40;
     const max = relief ? 118 : 210;
-    this.targetZoom = clamp(this.targetZoom * (1 + delta * 0.00072), min, max);
+    this.targetZoom = clamp(this.targetZoom * (1 + delta * 0.00065), min, max);
     this.requestRender();
   }
 
@@ -1109,9 +1080,7 @@ export class ThreeWorldRenderer {
       this.moonMesh,
       this.particleSystem,
       this.selectionMarker
-    ]) {
-      this.disposeObject(object);
-    }
+    ]) this.disposeObject(object);
     this.moonTexture?.dispose();
     this.moonTexture = null;
     this.surfaceMesh = null;
