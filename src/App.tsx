@@ -411,45 +411,41 @@ export const App: React.FC = () => {
               </div>
             </form>
 
-            {/* The strongest, most persistent instrument: presentation mode and active layer
-                read as one control, not two equally-weighted pills. */}
-            <div className="ws-instrument-group h-9">
-              <label className="flex items-center gap-1.5 pl-2.5 pr-1" title="Presentation mode">
-                <Globe2 size={14} style={{ color: 'var(--ws-accent)' }} />
-                <span className="ws-sr-only">World view</span>
-                <select
-                  value={viewMode}
-                  onChange={e => setViewMode(e.target.value as WorldViewMode)}
-                  aria-label="World view"
-                  className="ws-select bg-transparent text-[12px] h-9 outline-none cursor-pointer font-medium"
-                  style={{ color: 'var(--ws-ink)' }}
-                >
-                  {VIEW_OPTIONS.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <label className="ws-chip flex items-center gap-1.5 h-9 pl-2.5" title="Presentation mode">
+              <Globe2 size={14} style={{ color: 'var(--ws-accent)' }} />
+              <span className="ws-sr-only">World view</span>
+              <select
+                value={viewMode}
+                onChange={e => setViewMode(e.target.value as WorldViewMode)}
+                aria-label="World view"
+                className="ws-select bg-transparent text-[12px] h-9 outline-none cursor-pointer"
+                style={{ color: 'var(--ws-ink)' }}
+              >
+                {VIEW_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-              <label className="hidden sm:flex items-center gap-1.5 pl-2.5 pr-1" title="Map layer">
-                <Layers size={14} style={{ color: 'var(--ws-life)' }} />
-                <span className="ws-sr-only">Map layer</span>
-                <select
-                  value={activeLayer}
-                  onChange={e => setActiveLayer(e.target.value as MapLayerMode)}
-                  aria-label="Map layer"
-                  className="ws-select bg-transparent text-[12px] h-9 outline-none cursor-pointer"
-                  style={{ color: 'var(--ws-ink-muted)' }}
-                >
-                  {LAYER_OPTIONS.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <label className="ws-chip hidden sm:flex items-center gap-1.5 h-9 pl-2.5" title="Map layer">
+              <Layers size={14} style={{ color: 'var(--ws-life)' }} />
+              <span className="ws-sr-only">Map layer</span>
+              <select
+                value={activeLayer}
+                onChange={e => setActiveLayer(e.target.value as MapLayerMode)}
+                aria-label="Map layer"
+                className="ws-select bg-transparent text-[12px] h-9 outline-none cursor-pointer"
+                style={{ color: 'var(--ws-ink)' }}
+              >
+                {LAYER_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             <button
               onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
@@ -475,12 +471,10 @@ export const App: React.FC = () => {
               onOpenHotkeys={() => setActiveModal('HOTKEYS')}
             />
 
-            {/* Low-priority icon actions: no permanent chip weight, so they never compete
-                with the instrument group or the world itself. */}
             <button
               onClick={() => setIsImmersionMode(true)}
-              className="ws-icon-ghost hidden sm:flex items-center justify-center w-9 h-9"
-              style={{ color: 'var(--ws-ink-faint)' }}
+              className="ws-chip hidden sm:flex items-center justify-center w-9 h-9"
+              style={{ color: 'var(--ws-ink-muted)' }}
               title="Immersion Mode (Tab)"
               aria-label="Enter Immersion Mode"
             >
@@ -489,7 +483,7 @@ export const App: React.FC = () => {
 
             <button
               onClick={toggleAudio}
-              className="ws-icon-ghost flex items-center justify-center w-9 h-9"
+              className="ws-chip flex items-center justify-center w-9 h-9"
               style={{ color: isAudioMuted ? 'var(--ws-ink-faint)' : 'var(--ws-accent)' }}
               title={isAudioMuted ? 'Enable event sounds' : 'Mute event sounds'}
               aria-label="Soundscape Audio"

@@ -493,26 +493,31 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       />
 
       {hoveredTileData && (
-        <div className="ws-panel absolute bottom-4 left-4 px-3 py-2 text-xs pointer-events-none min-w-[214px] ws-rise" role="status">
-          <div className="flex items-baseline justify-between gap-4 pb-1.5 mb-1.5 border-b" style={{ borderColor: 'var(--ws-hairline)' }}>
-            <span className="text-[11.5px] font-medium" style={{ color: 'var(--ws-ink)' }}>
-              {hoveredTileData.biome.replace(/_/g, ' ').toLowerCase()}
-            </span>
-            <span className="ws-numeric text-[10px]" style={{ color: 'var(--ws-ink-faint)' }}>
+        <div className="ws-panel absolute bottom-4 left-4 px-3 py-2.5 text-xs pointer-events-none min-w-[214px] ws-rise" role="status">
+          <div className="flex items-center justify-between gap-4 pb-1.5 mb-1.5 border-b" style={{ borderColor: 'var(--ws-hairline)' }}>
+            <span className="ws-numeric text-[11px]" style={{ color: 'var(--ws-ink-muted)' }}>
               {hoveredTileData.x}, {hoveredTileData.y}
             </span>
+            <span className="text-[11px] font-medium" style={{ color: 'var(--ws-culture)' }}>
+              {hoveredTileData.biome.replace(/_/g, ' ').toLowerCase()}
+            </span>
           </div>
-          <div className="flex items-center gap-x-3 ws-numeric text-[11px] flex-wrap" style={{ color: 'var(--ws-ink-muted)' }}>
-            <span>{Math.round(hoveredTileData.elevation * 1000)}m</span>
-            <span style={{ color: 'var(--ws-hairline-strong)' }}>·</span>
-            <span>{hoveredTileData.currentTemp}°C</span>
-            <span style={{ color: 'var(--ws-hairline-strong)' }}>·</span>
-            <span>{Math.round(hoveredTileData.rainfall * 100)}% rain</span>
-            <span style={{ color: 'var(--ws-hairline-strong)' }}>·</span>
-            <span style={{ color: 'var(--ws-life)' }}>{Math.round(hoveredTileData.biomass)} biomass</span>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 ws-numeric text-[11px]" style={{ color: 'var(--ws-ink-muted)' }}>
+            <div>
+              elev <span style={{ color: 'var(--ws-ink)' }}>{Math.round(hoveredTileData.elevation * 1000)}m</span>
+            </div>
+            <div>
+              temp <span style={{ color: 'var(--ws-ink)' }}>{hoveredTileData.currentTemp}°C</span>
+            </div>
+            <div>
+              rain <span style={{ color: 'var(--ws-ink)' }}>{Math.round(hoveredTileData.rainfall * 100)}%</span>
+            </div>
+            <div>
+              biomass <span style={{ color: 'var(--ws-life)' }}>{Math.round(hoveredTileData.biomass)}</span>
+            </div>
           </div>
           {hoveredTileData.settlementId && state.settlements[hoveredTileData.settlementId] && (
-            <div className="mt-1.5 pt-1.5 border-t text-[11px] font-medium" style={{ borderColor: 'var(--ws-hairline)', color: 'var(--ws-culture)' }}>
+            <div className="mt-2 pt-1.5 border-t text-[11px] font-medium" style={{ borderColor: 'var(--ws-hairline)', color: 'var(--ws-culture)' }}>
               {state.settlements[hoveredTileData.settlementId].name} · {state.settlements[hoveredTileData.settlementId].tier.toLowerCase()}
             </div>
           )}

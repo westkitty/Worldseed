@@ -84,14 +84,15 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
             {isPaused ? <Play size={19} className="ml-0.5" /> : <Pause size={18} />}
           </button>
 
-          {/* Live state in words, not only colour — the speed itself lives in the speed
-              group below, so this only ever says whether time is moving. */}
-          <span
-            className="hidden sm:inline ws-hud-label"
-            style={{ color: isPaused ? 'var(--ws-ink-faint)' : 'var(--ws-life)', letterSpacing: '0.1em' }}
-          >
-            {isPaused ? 'held' : 'running'}
-          </span>
+          {/* Live state is stated in words, not only by colour. */}
+          <div className="hidden sm:flex flex-col leading-tight w-[54px]">
+            <span className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--ws-ink-faint)' }}>
+              {isPaused ? 'held' : 'running'}
+            </span>
+            <span className="ws-numeric text-[11px]" style={{ color: isPaused ? 'var(--ws-ink-faint)' : 'var(--ws-life)' }}>
+              {isPaused ? 'paused' : `${simulationSpeed}× yr/s`}
+            </span>
+          </div>
         </div>
 
         {/* Speed */}
