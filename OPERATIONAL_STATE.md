@@ -134,6 +134,20 @@ work than when the default world was 6% land.
 Browser journey coverage: first-light state, default Globe, Flat Atlas, Square World, all four WebGL hero views with drag/orbit/wheel/selection/layer switching, 24 consecutive view switches, keyboard camera without triggering unrelated modals, continuous 20× simulation, IndexedDB save → advance → load restoring the exact saved year (7 → 107 → 7), globe selection opening the inspector, WHY? trace, Instruments menu, Immersion Mode, and a 430×860 viewport check asserting the time control, Instruments menu and view selector all remain present. Live canvas count after view torture: 2. Audio oscillators constructed across the entire
 session: 0. World-first contract assertions: PASS.
 
+### CI evidence
+GitHub Actions run **32138511987** on `main` at `dab6bac`, both jobs green:
+- `build-and-test` (ubuntu-latest, 6m10s): unit/invariant suite, TypeScript/Vite production
+  build, and the real Chromium journey against the production preview.
+- `macos-native-wrapper` (macos-14, 44s): native app build, bundle verification, and the
+  WebKit rendered-root + IndexedDB readiness check.
+
+The uploaded `worldseed-browser-playtest` artifact confirms CI ran the reconciled journey and
+not a stale one — its report carries the merged contract fields: `worldFirstContract: PASS`,
+`audioOscillatorsCreated: 0`, `narrowViewportControls: PASS`,
+`liveCanvasesAfterViewTorture: 2`, `runtimeErrors: []`, save/load 20 → 120 → 20, and zero
+page or console errors. Its captured screenshots show all six presentation modes rendering
+correctly under CI's software WebGL on Linux.
+
 Measured generation cost at the default 64×48 world: PREBIOTIC 54 ms, MATURE_BIOSPHERE 2.4 s, FIRST_CITIES 2.9 s, MEDIEVAL 3.9 s, INDUSTRIAL 5.2 s, SPACEFARING 4.4 s, POST_COLLAPSE 6.5 s.
 
 ## Evidence Not Accepted As Release Proof
@@ -144,7 +158,6 @@ Measured generation cost at the default 64×48 world: PREBIOTIC 54 ms, MATURE_BI
 
 ## Known Limitations
 - **Target-Mac confirmation still pending.** The native build, bundle verification and WebKit rendered-root + IndexedDB checks pass locally, but the user has not yet launched and driven `build/macos/WORLDSEED.app` by hand since this pass.
-- **CI has not been run on these changes.** Only local execution of the same commands is recorded above.
 - **Two lines of UI work were merged.** Every overlapping file was resolved deliberately and
   the result was re-validated end to end, but the merged interface has had one review pass,
   not the several that each side had separately.
@@ -158,7 +171,7 @@ Measured generation cost at the default 64×48 world: PREBIOTIC 54 ms, MATURE_BI
 
 ## Current Release Status
 - **Simulation core**: VERIFIED GREEN — 39 tests including deep-time soak, determinism, ancestry, causal integrity, persistence round trip, era fidelity and topology semantics.
-- **Playable browser core**: VERIFIED GREEN from a real Chromium journey against the production build on this machine.
-- **Native macOS wrapper**: build, bundle verification, WebKit rendering and IndexedDB all pass locally; hands-on confirmation on the target Mac is still outstanding.
+- **Playable browser core**: VERIFIED GREEN from a real Chromium journey against the production build, both locally and in CI on clean Linux runners with software WebGL.
+- **Native macOS wrapper**: build, bundle verification, WebKit rendering and IndexedDB pass both locally and on the macos-14 CI runner; hands-on confirmation on the target Mac is the one remaining gap.
 - **Distribution**: LOCAL BUILD ONLY; not Developer ID signed or notarised.
 - **Mega-spec parity**: starting-era fidelity is now implemented and tested; exotic-topology depth and bespoke species/settlement 3D art remain partial.
