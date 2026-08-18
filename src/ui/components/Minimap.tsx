@@ -1,4 +1,6 @@
-// Locator map — a small, quiet reference showing where the camera is looking.
+// Locator map — shown only where a locator adds information: the two 2D cartographic views.
+// The 3D hero views already communicate orientation directly, so a tiny duplicate screenshot
+// there was permanent clutter rather than an instrument.
 
 import React, { useEffect, useRef } from 'react';
 import { WorldState, WorldViewMode } from '../../types/simulation';
@@ -23,11 +25,12 @@ export const Minimap: React.FC<MinimapProps> = ({ state, camera, viewMode, surfa
   const isFlat = viewMode === 'FLAT_ATLAS' || viewMode === 'SQUARE_TILE';
 
   useEffect(() => {
+    if (!isFlat) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     if (canvas.width !== MAP_W * dpr || canvas.height !== mapH * dpr) {
       canvas.width = MAP_W * dpr;
       canvas.height = mapH * dpr;
@@ -35,17 +38,16 @@ export const Minimap: React.FC<MinimapProps> = ({ state, camera, viewMode, surfa
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, MAP_W, mapH);
 
-    // The locator shows the same composited planet as the main view, downscaled — never a
-    // second, differently coloured rendering of the same world.
     if (surface) {
       ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'medium';
       ctx.drawImage(surface, 0, 0, MAP_W, mapH);
     } else {
       ctx.fillStyle = '#0a1018';
       ctx.fillRect(0, 0, MAP_W, mapH);
     }
 
-    if (isFlat && viewportSize.width > 0) {
+    if (viewportSize.width > 0) {
       const frame = WorldProjectionEngine.frame(viewportSize.width, viewportSize.height, width, height, camera);
       const visX = (-frame.originX / frame.tileSize / width) * MAP_W;
       const visY = (-frame.originY / frame.tileSize / height) * mapH;
@@ -53,7 +55,7 @@ export const Minimap: React.FC<MinimapProps> = ({ state, camera, viewMode, surfa
       const visH = (viewportSize.height / frame.tileSize / height) * mapH;
 
       ctx.save();
-      ctx.strokeStyle = 'rgba(111, 208, 255, 0.9)';
+      ctx.strokeStyle = 'rgba(121, 203, 234, 0.9)';
       ctx.lineWidth = 1;
       ctx.strokeRect(
         Math.max(0.5, visX),
@@ -64,6 +66,8 @@ export const Minimap: React.FC<MinimapProps> = ({ state, camera, viewMode, surfa
       ctx.restore();
     }
   }, [state, surface, camera, isFlat, viewportSize.width, viewportSize.height, width, height, mapH]);
+
+  if (!isFlat) return null;
 
   const jump = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
@@ -91,12 +95,12 @@ export const Minimap: React.FC<MinimapProps> = ({ state, camera, viewMode, surfa
           }
         }}
         onPointerUp={e => e.stopPropagation()}
-        className="rounded-[7px] cursor-crosshair block"
+        className="rounded-[6px] cursor-crosshair block"
         aria-hidden="true"
       />
       <div className="flex items-center justify-between px-0.5 pt-1 ws-numeric text-[10px]" style={{ color: 'var(--ws-ink-faint)' }}>
         <span>{width}×{height}</span>
-        <span>{isFlat ? `${camera.zoom.toFixed(1)}×` : viewMode.replace(/_/g, ' ').toLowerCase()}</span>
+        <span>{camera.zoom.toFixed(1)}×</span>
       </div>
     </div>
   );

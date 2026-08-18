@@ -1,15 +1,10 @@
-// WORLDSEED — Shared Planetary Surface Compositor
+// WORLDSEED — shared 2D planetary surface compositor.
 //
-// One authoritative image of the planet, consumed by BOTH the 2D cartographic views and
-// the Three.js hero views, so every presentation mode reads as the same world.
-//
-// Rules this module obeys:
-//  * It never mutates simulation state and never touches the simulation PRNG. All visual
-//    variation comes from `visualNoise`, a pure integer hash of (worldSeed, x, y, channel).
-//  * It never invents facts. Micro-detail modulates brightness/roughness only; rivers,
-//    coastlines, ice, settlements and damage are drawn strictly from tile fields.
-//  * It reuses one canvas + one ImageData buffer per instance. Nothing is reallocated on a
-//    simulation tick.
+// The authoritative simulation grid is intentionally coarse. This compositor therefore
+// renders it like a deliberate physical atlas: continuous elevation/climate colour and real
+// hydrology, with biome classes used as a restrained tint instead of giant rectangular paint
+// swatches. It reuses its raster and never recomputes just because five simulated years passed
+// in Physical/Biome view.
 
 import { BiomeType, WorldState } from '../../types/simulation';
 
@@ -34,82 +29,47 @@ interface RGB {
 }
 
 const BIOME_RGB: Record<BiomeType, RGB> = {
-  DEEP_OCEAN: { r: 12, g: 34, b: 66 },
-  SHALLOW_OCEAN: { r: 26, g: 78, b: 128 },
-  HYDROTHERMAL_RIFT: { r: 58, g: 24, b: 44 },
-  COASTAL_REEF: { r: 40, g: 122, b: 142 },
-  TUNDRA: { r: 150, g: 158, b: 152 },
-  TAIGA: { r: 46, g: 76, b: 64 },
-  TEMPERATE_FOREST: { r: 58, g: 96, b: 52 },
-  TEMPERATE_GRASSLAND: { r: 118, g: 132, b: 70 },
-  TROPICAL_RAINFOREST: { r: 38, g: 84, b: 44 },
-  SAVANNA: { r: 155, g: 136, b: 72 },
-  HOT_DESERT: { r: 190, g: 164, b: 108 },
-  COLD_DESERT: { r: 138, g: 138, b: 128 },
-  WETLAND: { r: 68, g: 104, b: 84 },
-  ALPINE: { r: 176, g: 180, b: 188 },
-  VOLCANIC_BARREN: { r: 62, g: 54, b: 52 }
+  DEEP_OCEAN: { r: 8, g: 29, b: 52 },
+  SHALLOW_OCEAN: { r: 27, g: 91, b: 121 },
+  HYDROTHERMAL_RIFT: { r: 74, g: 38, b: 49 },
+  COASTAL_REEF: { r: 48, g: 121, b: 127 },
+  TUNDRA: { r: 134, g: 143, b: 140 },
+  TAIGA: { r: 47, g: 74, b: 60 },
+  TEMPERATE_FOREST: { r: 54, g: 91, b: 49 },
+  TEMPERATE_GRASSLAND: { r: 111, g: 125, b: 69 },
+  TROPICAL_RAINFOREST: { r: 38, g: 82, b: 43 },
+  SAVANNA: { r: 150, g: 130, b: 72 },
+  HOT_DESERT: { r: 182, g: 151, b: 99 },
+  COLD_DESERT: { r: 128, g: 130, b: 124 },
+  WETLAND: { r: 64, g: 99, b: 79 },
+  ALPINE: { r: 162, g: 168, b: 174 },
+  VOLCANIC_BARREN: { r: 67, g: 58, b: 54 }
 };
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
-const smoothstep = (edge0: number, edge1: number, x: number): number => {
-  const t = clamp01((x - edge0) / (edge1 - edge0 || 1e-6));
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+const smoothstep = (a: number, b: number, x: number): number => {
+  const t = clamp01((x - a) / Math.max(1e-6, b - a));
   return t * t * (3 - 2 * t);
 };
 
-/**
- * Deterministic visual hash. Pure function of the world seed and a coordinate — it is
- * repeatable across reloads, saves and machines, and is completely isolated from the
- * simulation's PRNG stream.
- */
-const visualNoise = (seed: number, x: number, y: number, channel: number): number => {
+export const visualNoise = (seed: number, x: number, y: number, channel = 0): number => {
   let h = (seed | 0) ^ Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1) ^ Math.imul(channel | 0, 0x9e3779b9);
   h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
   h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
   return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
 };
 
-/** Smooth value noise built from the deterministic hash (no allocation, no PRNG). */
-const valueNoise = (seed: number, x: number, y: number, channel: number): number => {
-  const xi = Math.floor(x);
-  const yi = Math.floor(y);
-  const xf = x - xi;
-  const yf = y - yi;
-  const u = xf * xf * (3 - 2 * xf);
-  const v = yf * yf * (3 - 2 * yf);
-  const n00 = visualNoise(seed, xi, yi, channel);
-  const n10 = visualNoise(seed, xi + 1, yi, channel);
-  const n01 = visualNoise(seed, xi, yi + 1, channel);
-  const n11 = visualNoise(seed, xi + 1, yi + 1, channel);
-  return (n00 * (1 - u) + n10 * u) * (1 - v) + (n01 * (1 - u) + n11 * u) * v;
-};
-
-const fbm = (seed: number, x: number, y: number, channel: number, octaves: number): number => {
-  let sum = 0;
-  let amp = 0.5;
-  let freq = 1;
-  let norm = 0;
-  for (let o = 0; o < octaves; o++) {
-    sum += valueNoise(seed, x * freq, y * freq, channel + o) * amp;
-    norm += amp;
-    amp *= 0.5;
-    freq *= 2.07;
-  }
-  return sum / (norm || 1);
-};
-
-const hexToRgb = (hex: string): RGB => {
-  const clean = hex.replace('#', '');
-  const full = clean.length === 3 ? clean.split('').map(c => c + c).join('') : clean;
-  const int = parseInt(full.slice(0, 6), 16);
-  if (Number.isNaN(int)) return { r: 128, g: 128, b: 128 };
-  return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 };
+const hashHue = (value: string): number => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+  return Math.abs(hash) % 360;
 };
 
 const hslToRgb = (h: number, s: number, l: number): RGB => {
   const c = (1 - Math.abs(2 * l - 1)) * s;
-  const hp = ((h % 360) + 360) % 360 / 60;
+  const hp = (((h % 360) + 360) % 360) / 60;
   const x = c * (1 - Math.abs((hp % 2) - 1));
   let r = 0;
   let g = 0;
@@ -124,41 +84,32 @@ const hslToRgb = (h: number, s: number, l: number): RGB => {
   return { r: Math.round((r + m) * 255), g: Math.round((g + m) * 255), b: Math.round((b + m) * 255) };
 };
 
-const hashHue = (value: string): number => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
-  return Math.abs(hash) % 360;
-};
-
 export interface PlanetSurfaceResult {
   canvas: HTMLCanvasElement;
-  /** Increments whenever pixels actually changed, so consumers know when to re-upload. */
   revision: number;
   pixelWidth: number;
   pixelHeight: number;
 }
 
-/**
- * Composites the world grid into a smooth, hill-shaded planetary surface image.
- * Instances are cheap to hold; a single instance reuses its canvas for the app lifetime.
- */
 export class PlanetSurfaceCompositor {
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   private image: ImageData | null = null;
-
   private gridWidth = 0;
   private gridHeight = 0;
   private pxPerTile = 0;
   private revision = 0;
   private lastSignature = '';
+  private lastLayer: SurfaceLayer | null = null;
+  private lastPaintAt = -Infinity;
 
-  // Interpolation source fields, rebuilt only when the grid actually changes.
-  private elevation: Float32Array = new Float32Array(0);
-  private temperature: Float32Array = new Float32Array(0);
-  private moisture: Float32Array = new Float32Array(0);
-  private vegetation: Float32Array = new Float32Array(0);
-  private damage: Float32Array = new Float32Array(0);
+  private elevation = new Float32Array(0);
+  private temperature = new Float32Array(0);
+  private moisture = new Float32Array(0);
+  private vegetation = new Float32Array(0);
+  private biomass = new Float32Array(0);
+  private damage = new Float32Array(0);
+  private shade = new Float32Array(0);
 
   constructor(private readonly quality: number = 10) {}
 
@@ -166,23 +117,28 @@ export class PlanetSurfaceCompositor {
     return this.revision;
   }
 
-  /**
-   * Returns the composited surface. Recomposites only when the signature changes, so a
-   * simulation tick that did not alter anything visible costs nothing.
-   */
   public compose(state: WorldState, layer: SurfaceLayer, signature: string): PlanetSurfaceResult {
     const { width, height } = state.config;
-    const pxPerTile = this.quality;
-
-    if (!this.canvas || this.gridWidth !== width || this.gridHeight !== height || this.pxPerTile !== pxPerTile) {
+    const pxPerTile = Math.max(4, Math.min(this.quality, 8));
+    if (!this.canvas || width !== this.gridWidth || height !== this.gridHeight || pxPerTile !== this.pxPerTile) {
       this.allocate(width, height, pxPerTile);
       this.lastSignature = '';
+      this.lastLayer = null;
     }
 
-    const fullSignature = `${layer}|${signature}`;
-    if (fullSignature !== this.lastSignature) {
-      this.lastSignature = fullSignature;
+    const physicalLike = layer === 'PHYSICAL' || layer === 'BIOMES';
+    const normalized = physicalLike ? this.normalizeSignature(signature) : signature;
+    const fullSignature = `${layer}|${normalized}`;
+    const layerChanged = layer !== this.lastLayer;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+
+    // Dynamic thematic layers can follow simulation time, but never repaint faster than 4 Hz.
+    // Physical/Biome views ignore the clock-only five-year bucket entirely.
+    if (fullSignature !== this.lastSignature && (layerChanged || now - this.lastPaintAt >= 250)) {
       this.paint(state, layer);
+      this.lastSignature = fullSignature;
+      this.lastLayer = layer;
+      this.lastPaintAt = now;
       this.revision++;
     }
 
@@ -202,8 +158,17 @@ export class PlanetSurfaceCompositor {
     this.temperature = new Float32Array(0);
     this.moisture = new Float32Array(0);
     this.vegetation = new Float32Array(0);
+    this.biomass = new Float32Array(0);
     this.damage = new Float32Array(0);
+    this.shade = new Float32Array(0);
     this.lastSignature = '';
+    this.lastLayer = null;
+  }
+
+  private normalizeSignature(signature: string): string {
+    const parts = signature.split(':');
+    if (parts.length >= 7) return [parts[0], parts[2], parts[3], parts[4], parts[5], parts[6]].join(':');
+    return signature;
   }
 
   private allocate(width: number, height: number, pxPerTile: number) {
@@ -212,39 +177,49 @@ export class PlanetSurfaceCompositor {
     canvas.height = height * pxPerTile;
     const ctx = canvas.getContext('2d', { willReadFrequently: false });
     if (!ctx) throw new Error('WORLDSEED could not allocate the planetary surface canvas.');
-
     this.canvas = canvas;
     this.ctx = ctx;
     this.image = ctx.createImageData(canvas.width, canvas.height);
     this.gridWidth = width;
     this.gridHeight = height;
     this.pxPerTile = pxPerTile;
-
-    const cells = width * height;
-    this.elevation = new Float32Array(cells);
-    this.temperature = new Float32Array(cells);
-    this.moisture = new Float32Array(cells);
-    this.vegetation = new Float32Array(cells);
-    this.damage = new Float32Array(cells);
+    const count = width * height;
+    this.elevation = new Float32Array(count);
+    this.temperature = new Float32Array(count);
+    this.moisture = new Float32Array(count);
+    this.vegetation = new Float32Array(count);
+    this.biomass = new Float32Array(count);
+    this.damage = new Float32Array(count);
+    this.shade = new Float32Array(count);
   }
 
   private readFields(state: WorldState) {
     const { width, height } = state.config;
     for (let y = 0; y < height; y++) {
-      const row = state.grid[y];
       for (let x = 0; x < width; x++) {
-        const t = row[x];
+        const tile = state.grid[y][x];
         const i = y * width + x;
-        this.elevation[i] = t.elevation;
-        this.temperature[i] = t.currentTemp;
-        this.moisture[i] = t.moisture;
-        this.vegetation[i] = t.vegetationDensity;
-        this.damage[i] = Math.max(t.environmentalDamage, t.pollution, t.erosionLevel);
+        this.elevation[i] = tile.elevation;
+        this.temperature[i] = tile.currentTemp;
+        this.moisture[i] = tile.moisture;
+        this.vegetation[i] = tile.vegetationDensity;
+        this.biomass[i] = tile.biomass;
+        this.damage[i] = Math.max(tile.environmentalDamage, tile.pollution, tile.erosionLevel);
+      }
+    }
+    for (let y = 0; y < height; y++) {
+      const ym = Math.max(0, y - 1);
+      const yp = Math.min(height - 1, y + 1);
+      for (let x = 0; x < width; x++) {
+        const xm = (x - 1 + width) % width;
+        const xp = (x + 1) % width;
+        const dx = this.elevation[y * width + xm] - this.elevation[y * width + xp];
+        const dy = this.elevation[ym * width + x] - this.elevation[yp * width + x];
+        this.shade[y * width + x] = clamp(0.99 + dx * 1.0 + dy * 0.82, 0.8, 1.14);
       }
     }
   }
 
-  /** Bilinear sample in tile space. X wraps (equirectangular), Y clamps at the poles. */
   private sample(field: Float32Array, tx: number, ty: number): number {
     const w = this.gridWidth;
     const h = this.gridHeight;
@@ -258,23 +233,20 @@ export class PlanetSurfaceCompositor {
     const xb = ((x0 + 1) % w + w) % w;
     const ya = clamp(y0, 0, h - 1);
     const yb = clamp(y0 + 1, 0, h - 1);
-    const v00 = field[ya * w + xa];
-    const v10 = field[ya * w + xb];
-    const v01 = field[yb * w + xa];
-    const v11 = field[yb * w + xb];
-    return (v00 * (1 - dx) + v10 * dx) * (1 - dy) + (v01 * (1 - dx) + v11 * dx) * dy;
+    return lerp(
+      lerp(field[ya * w + xa], field[ya * w + xb], dx),
+      lerp(field[yb * w + xa], field[yb * w + xb], dx),
+      dy
+    );
   }
 
   private tileAt(state: WorldState, tx: number, ty: number) {
-    const w = this.gridWidth;
-    const h = this.gridHeight;
-    const x = ((Math.floor(tx) % w) + w) % w;
-    const y = clamp(Math.floor(ty), 0, h - 1);
+    const x = ((Math.floor(tx) % this.gridWidth) + this.gridWidth) % this.gridWidth;
+    const y = clamp(Math.floor(ty), 0, this.gridHeight - 1);
     return state.grid[y][x];
   }
 
-  /** Blended biome colour from the four surrounding tiles — removes the blocky grid. */
-  private blendedBiome(state: WorldState, tx: number, ty: number): RGB {
+  private blendedLandBiome(state: WorldState, tx: number, ty: number): RGB {
     const w = this.gridWidth;
     const h = this.gridHeight;
     const fx = tx - 0.5;
@@ -283,65 +255,121 @@ export class PlanetSurfaceCompositor {
     const y0 = Math.floor(fy);
     const dx = fx - x0;
     const dy = fy - y0;
-    const xa = ((x0 % w) + w) % w;
-    const xb = ((x0 + 1) % w + w) % w;
-    const ya = clamp(y0, 0, h - 1);
-    const yb = clamp(y0 + 1, 0, h - 1);
+    const points = [
+      [((x0 % w) + w) % w, clamp(y0, 0, h - 1), (1 - dx) * (1 - dy)],
+      [((x0 + 1) % w + w) % w, clamp(y0, 0, h - 1), dx * (1 - dy)],
+      [((x0 % w) + w) % w, clamp(y0 + 1, 0, h - 1), (1 - dx) * dy],
+      [((x0 + 1) % w + w) % w, clamp(y0 + 1, 0, h - 1), dx * dy]
+    ] as const;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let weight = 0;
+    for (const [x, y, rawWeight] of points) {
+      const tile = state.grid[y][x];
+      if (tile.isWater) continue;
+      const c = BIOME_RGB[tile.biome] ?? BIOME_RGB.TEMPERATE_GRASSLAND;
+      r += c.r * rawWeight;
+      g += c.g * rawWeight;
+      b += c.b * rawWeight;
+      weight += rawWeight;
+    }
+    if (weight < 0.001) return BIOME_RGB[this.tileAt(state, tx, ty).biome] ?? BIOME_RGB.TEMPERATE_GRASSLAND;
+    return { r: r / weight, g: g / weight, b: b / weight };
+  }
 
-    const c00 = BIOME_RGB[state.grid[ya][xa].biome] || BIOME_RGB.TEMPERATE_FOREST;
-    const c10 = BIOME_RGB[state.grid[ya][xb].biome] || BIOME_RGB.TEMPERATE_FOREST;
-    const c01 = BIOME_RGB[state.grid[yb][xa].biome] || BIOME_RGB.TEMPERATE_FOREST;
-    const c11 = BIOME_RGB[state.grid[yb][xb].biome] || BIOME_RGB.TEMPERATE_FOREST;
+  private physicalColor(state: WorldState, tx: number, ty: number, x: number, y: number): RGB {
+    const sea = state.config.seaLevel;
+    const e = this.sample(this.elevation, tx, ty);
+    if (e < sea) {
+      const depth = clamp01((sea - e) / Math.max(0.24, sea + 0.28));
+      const t = smoothstep(0.04, 0.72, depth);
+      const grain = (visualNoise(state.config.seed, x >> 1, y >> 1, 13) - 0.5) * 3;
+      return {
+        r: lerp(33, 7, t) + grain,
+        g: lerp(104, 29, t) + grain,
+        b: lerp(130, 53, t) + grain
+      };
+    }
 
-    const wa = (1 - dx) * (1 - dy);
-    const wb = dx * (1 - dy);
-    const wc = (1 - dx) * dy;
-    const wd = dx * dy;
+    const temp = this.sample(this.temperature, tx, ty);
+    const moisture = clamp01(this.sample(this.moisture, tx, ty));
+    const vegetation = clamp01(this.sample(this.vegetation, tx, ty));
+    const elevation01 = clamp01((e - sea) / Math.max(0.08, 1 - sea));
+    const lush = clamp01(vegetation * 0.72 + moisture * 0.42);
+    const cold = clamp01((7 - temp) / 34);
+    const high = smoothstep(0.48, 0.88, elevation01);
+    const snow = clamp01(smoothstep(0.8, 0.98, elevation01) + smoothstep(-7, -24, temp));
+    const biome = this.blendedLandBiome(state, tx, ty);
 
-    return {
-      r: c00.r * wa + c10.r * wb + c01.r * wc + c11.r * wd,
-      g: c00.g * wa + c10.g * wb + c01.g * wc + c11.g * wd,
-      b: c00.b * wa + c10.b * wb + c01.b * wc + c11.b * wd
-    };
+    let r = lerp(161, 49, lush);
+    let g = lerp(137, 91, lush);
+    let b = lerp(89, 55, lush);
+    r = lerp(r, 106, cold * 0.7);
+    g = lerp(g, 118, cold * 0.7);
+    b = lerp(b, 116, cold * 0.7);
+    r = lerp(r, 121, high * 0.64);
+    g = lerp(g, 119, high * 0.64);
+    b = lerp(b, 112, high * 0.64);
+    r = lerp(r, biome.r, 0.24);
+    g = lerp(g, biome.g, 0.24);
+    b = lerp(b, biome.b, 0.24);
+    r = lerp(r, 211, snow * 0.74);
+    g = lerp(g, 217, snow * 0.74);
+    b = lerp(b, 220, snow * 0.74);
+
+    const shade = this.sample(this.shade, tx, ty);
+    const grain = (visualNoise(state.config.seed, x, y, 17) - 0.5) * 0.035;
+    const contourPhase = Math.abs((((e - sea) * 15) % 1 + 1) % 1 - 0.5);
+    const contour = contourPhase > 0.47 && elevation01 > 0.08 ? 0.95 : 1;
+    const factor = shade * (1 + grain) * contour;
+    r *= factor;
+    g *= factor;
+    b *= factor;
+
+    const coastBand = 1 - smoothstep(0.006, 0.028, Math.abs(e - sea));
+    if (coastBand > 0) {
+      r = lerp(r, 177, coastBand * 0.28);
+      g = lerp(g, 154, coastBand * 0.28);
+      b = lerp(b, 105, coastBand * 0.28);
+    }
+    return { r, g, b };
   }
 
   private thematicColor(state: WorldState, tx: number, ty: number, layer: SurfaceLayer): RGB | null {
     const tile = this.tileAt(state, tx, ty);
     switch (layer) {
+      case 'BIOMES':
+        return BIOME_RGB[tile.biome];
       case 'TEMPERATURE': {
         const t = clamp01((this.sample(this.temperature, tx, ty) + 35) / 85);
-        return hslToRgb(228 - t * 228, 0.72, 0.24 + t * 0.3);
+        return hslToRgb(226 - t * 220, 0.72, 0.3 + t * 0.18);
       }
       case 'RAINFALL': {
-        const r = clamp01(this.sample(this.moisture, tx, ty));
-        return hslToRgb(206 - r * 26, 0.7, 0.18 + r * 0.42);
+        const wet = clamp01(this.sample(this.moisture, tx, ty));
+        return hslToRgb(214 - wet * 38, 0.7, 0.22 + wet * 0.34);
       }
       case 'BIODIVERSITY': {
-        const activity = clamp01((tile.biomass / 1000 + this.sample(this.vegetation, tx, ty)) / 2);
-        return hslToRgb(28 + activity * 112, 0.6, 0.18 + activity * 0.34);
+        const activity = clamp01((this.sample(this.biomass, tx, ty) / 1000 + this.sample(this.vegetation, tx, ty)) * 0.5);
+        return hslToRgb(30 + activity * 105, 0.62, 0.24 + activity * 0.22);
       }
       case 'POLITICAL':
-        return tile.polityId ? hslToRgb(hashHue(tile.polityId), 0.55, 0.44) : null;
+        return tile.polityId ? hslToRgb(hashHue(tile.polityId), 0.56, 0.46) : null;
       case 'SETTLEMENTS':
-        if (tile.settlementId) return { r: 244, g: 178, b: 92 };
-        if (tile.infrastructureLevel > 0) return { r: 150, g: 108, b: 58 };
-        return null;
-      case 'CULTURES': {
-        if (!tile.dominantCultureId) return null;
-        const culture = state.cultures[tile.dominantCultureId];
-        return culture?.colorHex ? hexToRgb(culture.colorHex) : hslToRgb(hashHue(tile.dominantCultureId), 0.5, 0.45);
-      }
+        return tile.settlementId ? { r: 239, g: 176, b: 84 } : tile.infrastructureLevel > 0 ? { r: 145, g: 108, b: 65 } : null;
+      case 'CULTURES':
+        return tile.dominantCultureId ? hslToRgb(hashHue(tile.dominantCultureId), 0.55, 0.46) : null;
       case 'LANGUAGES': {
-        const languageId = tile.dominantCultureId ? state.cultures[tile.dominantCultureId]?.languageId : undefined;
-        return languageId ? hslToRgb(hashHue(languageId), 0.55, 0.46) : null;
+        const culture = tile.dominantCultureId ? state.cultures[tile.dominantCultureId] : undefined;
+        return culture?.languageId ? hslToRgb(hashHue(culture.languageId), 0.58, 0.47) : null;
       }
       case 'DISEASES':
-        return tile.activeContagionIds.length > 0 ? { r: 226, g: 84, b: 74 } : null;
+        return tile.activeContagionIds.length > 0 ? { r: 218, g: 73, b: 68 } : null;
       case 'RUINS_ARCHAEOLOGY':
-        return tile.ruins.length > 0 ? { r: 176, g: 132, b: 246 } : tile.fossils.length > 0 ? { r: 120, g: 96, b: 168 } : null;
+        return tile.ruins.length > 0 ? { r: 176, g: 126, b: 236 } : tile.fossils.length > 0 ? { r: 120, g: 95, b: 168 } : null;
       case 'ENVIRONMENTAL_SCARS': {
         const d = clamp01(this.sample(this.damage, tx, ty));
-        return d > 0.04 ? hslToRgb(44 - d * 44, 0.7, 0.46 - d * 0.16) : null;
+        return d > 0.03 ? hslToRgb(46 - d * 44, 0.7, 0.48 - d * 0.18) : null;
       }
       default:
         return null;
@@ -352,326 +380,89 @@ export class PlanetSurfaceCompositor {
     const ctx = this.ctx!;
     const image = this.image!;
     const data = image.data;
-    const px = this.pxPerTile;
     const pw = this.canvas!.width;
     const ph = this.canvas!.height;
-    const seaLevel = state.config.seaLevel;
-    const seed = state.config.seed | 0;
-    const isThematic = layer !== 'PHYSICAL' && layer !== 'BIOMES';
-
+    const px = this.pxPerTile;
+    const physical = layer === 'PHYSICAL';
     this.readFields(state);
-
-    // Light comes from the upper-left so northern slopes catch it; this matches the
-    // directional light used by the Three.js hero views.
-    const lightX = -0.62;
-    const lightY = -0.66;
-    const lightZ = 0.43;
-
-    const relief = 26; // vertical exaggeration for the derived normals
-    const step = 1 / px;
 
     for (let y = 0; y < ph; y++) {
       const ty = (y + 0.5) / px;
       for (let x = 0; x < pw; x++) {
         const tx = (x + 0.5) / px;
-        const idx = (y * pw + x) * 4;
-
-        const e = this.sample(this.elevation, tx, ty);
-        // Detail displacement: purely visual, deterministic, and small enough that it can
-        // never move a coastline across a tile boundary or imply terrain that is not there.
-        const detail = (fbm(seed, tx * 3.1, ty * 3.1, 11, 4) - 0.5) * 0.045;
-        const eDetailed = e + detail * (e > seaLevel ? 1 : 0.35);
-        const land = eDetailed - seaLevel;
-
-        let r: number;
-        let g: number;
-        let b: number;
-
-        if (land < 0) {
-          // ---- OCEAN ----
-          const depth = clamp01(-land / (seaLevel + 0.6));
-          const shelf = smoothstep(0.0, 0.09, -land);
-          const abyss = smoothstep(0.25, 0.75, depth);
-          r = 34 - abyss * 24 + (1 - shelf) * 26;
-          g = 96 - abyss * 66 + (1 - shelf) * 46;
-          b = 148 - abyss * 84 + (1 - shelf) * 40;
-
-          // Bathymetric banding keeps deep water from reading as a flat fill.
-          const band = fbm(seed, tx * 2.6, ty * 2.6, 31, 3);
-          const bandLift = (band - 0.5) * 8 * (0.3 + depth * 0.7);
-          r += bandLift * 0.4;
-          g += bandLift * 0.7;
-          b += bandLift;
-
-          // Sea ice at the cold extremes, derived from real temperature.
-          const temp = this.sample(this.temperature, tx, ty);
-          const iceJitter = (fbm(seed, tx * 3.6, ty * 3.6, 91, 3) - 0.5) * 5;
-          const ice = smoothstep(-3 + iceJitter, -15 + iceJitter, temp);
-          if (ice > 0) {
-            const iceTint = 216 + fbm(seed, tx * 5, ty * 5, 41, 2) * 30;
-            r += (iceTint - r) * ice;
-            g += (iceTint + 6 - g) * ice;
-            b += (iceTint + 14 - b) * ice;
-          }
-        } else {
-          // ---- LAND ----
-          const base = this.blendedBiome(state, tx, ty);
-          r = base.r;
-          g = base.g;
-          b = base.b;
-
-          // Hill shading from the interpolated elevation field.
-          const eL = this.sample(this.elevation, tx - step, ty);
-          const eR = this.sample(this.elevation, tx + step, ty);
-          const eU = this.sample(this.elevation, tx, ty - step);
-          const eD = this.sample(this.elevation, tx, ty + step);
-          const nx = (eL - eR) * relief;
-          const ny = (eU - eD) * relief;
-          const len = Math.sqrt(nx * nx + ny * ny + 1) || 1;
-          const lambert = clamp((nx / len) * lightX + (ny / len) * lightY + (1 / len) * lightZ, -1, 1);
-          const shade = 0.62 + lambert * 0.68;
-
-          // Altitude tinting: rock above the tree line, snow above the frost line.
-          const altitude = clamp01(land / 0.55);
-          const rock = smoothstep(0.52, 0.86, altitude);
-          r += (128 - r) * rock * 0.55;
-          g += (124 - g) * rock * 0.55;
-          b += (120 - b) * rock * 0.55;
-
-          const temp = this.sample(this.temperature, tx, ty);
-          // Permanent snow only where it is genuinely frigid, or high enough to sit above the
-          // snow line. Treating every sub-zero tile as an ice sheet buried whole continents.
-          // The snow line is perturbed by the same deterministic noise field as the terrain,
-          // so its edge follows the ground instead of stair-stepping along tile boundaries.
-          const snowJitter = (fbm(seed, tx * 4.4, ty * 4.4, 81, 3) - 0.5) * 7;
-          const snow = clamp01(
-            smoothstep(-5 + snowJitter, -20 + snowJitter, temp) * 0.9 + smoothstep(0.72, 0.99, altitude) * 0.8
-          );
-          if (snow > 0) {
-            const snowTint = 226 + fbm(seed, tx * 6, ty * 6, 51, 2) * 26;
-            r += (snowTint - r) * snow;
-            g += (snowTint + 4 - g) * snow;
-            b += (snowTint + 12 - b) * snow;
-          }
-
-          // Deterministic micro-texture — vegetation clumping and soil mottling.
-          const micro = fbm(seed, tx * 7.3, ty * 7.3, 61, 3) - 0.5;
-          const veg = clamp01(this.sample(this.vegetation, tx, ty));
-          const mottle = micro * (10 + veg * 18);
-          r += mottle * 0.7;
-          g += mottle;
-          b += mottle * 0.5;
-
-          r *= shade;
-          g *= shade;
-          b *= shade;
-
-          // Environmental scarring darkens and desaturates the surface everywhere it exists,
-          // not only on the dedicated layer, so damage is legible in the hero views.
-          const dmg = clamp01(this.sample(this.damage, tx, ty));
-          if (dmg > 0.02) {
-            const ash = 58 + fbm(seed, tx * 4, ty * 4, 71, 2) * 22;
-            const k = dmg * 0.72;
-            r += (ash - r) * k;
-            g += (ash * 0.86 - g) * k;
-            b += (ash * 0.78 - b) * k;
-          }
-
-          // Coastal strand — a thin lit band exactly where land meets sea.
-          const strand = 1 - smoothstep(0.0, 0.028, land);
-          if (strand > 0) {
-            r += (206 - r) * strand * 0.6;
-            g += (190 - g) * strand * 0.6;
-            b += (150 - b) * strand * 0.6;
-          }
-        }
-
-        // Thematic overlays keep the shaded relief underneath so data layers still read
-        // as a planet rather than as a spreadsheet of coloured squares.
-        if (isThematic) {
-          const theme = this.thematicColor(state, tx, ty, layer);
-          if (theme) {
-            const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
-            const k = 0.78;
-            r += (theme.r * (0.55 + lum * 0.75) - r) * k;
-            g += (theme.g * (0.55 + lum * 0.75) - g) * k;
-            b += (theme.b * (0.55 + lum * 0.75) - b) * k;
-          } else if (land >= 0) {
-            // Desaturate un-attributed land so attributed regions pop.
-            const grey = (r + g + b) / 3;
-            r += (grey * 0.62 - r) * 0.62;
-            g += (grey * 0.62 - g) * 0.62;
-            b += (grey * 0.66 - b) * 0.62;
-          }
-        }
-
-        data[idx] = clamp(r, 0, 255);
-        data[idx + 1] = clamp(g, 0, 255);
-        data[idx + 2] = clamp(b, 0, 255);
-        data[idx + 3] = 255;
+        const i = (y * pw + x) * 4;
+        const base = this.physicalColor(state, tx, ty, x, y);
+        const thematic = physical ? null : this.thematicColor(state, tx, ty, layer);
+        const blend = thematic ? (layer === 'BIOMES' ? 0.74 : 0.85) : 0;
+        const dim = !physical && !thematic ? 0.58 : 1;
+        data[i] = clamp(Math.round(lerp(base.r, thematic?.r ?? base.r, blend) * dim), 0, 255);
+        data[i + 1] = clamp(Math.round(lerp(base.g, thematic?.g ?? base.g, blend) * dim), 0, 255);
+        data[i + 2] = clamp(Math.round(lerp(base.b, thematic?.b ?? base.b, blend) * dim), 0, 255);
+        data[i + 3] = 255;
       }
     }
-
     ctx.putImageData(image, 0, 0);
-
-    // Vector features are stroked on top of the raster so they stay crisp and continuous.
-    this.paintHydrology(ctx, state);
-    this.paintInfrastructure(ctx, state);
-    this.paintSettlements(ctx, state, layer);
+    this.paintHydrologyAndPlaces(state, layer);
   }
 
-  /** Rivers and lakes traced as continuous water, not per-tile stubs. */
-  private paintHydrology(ctx: CanvasRenderingContext2D, state: WorldState) {
+  private paintHydrologyAndPlaces(state: WorldState, layer: SurfaceLayer) {
+    const ctx = this.ctx!;
     const px = this.pxPerTile;
-    const { width, height } = state.config;
-
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    // Lakes first, as filled bodies.
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const tile = state.grid[y][x];
-        if (!tile.isLake || tile.isWater) continue;
-        const cx = (x + 0.5) * px;
-        const cy = (y + 0.5) * px;
-        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, px * 0.85);
-        grad.addColorStop(0, 'rgba(38, 104, 150, 0.95)');
-        grad.addColorStop(1, 'rgba(30, 78, 118, 0.35)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(cx, cy, px * 0.8, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    // Rivers: two passes (incised valley shadow, then the water itself).
-    for (const pass of [0, 1]) {
-      ctx.strokeStyle = pass === 0 ? 'rgba(8, 22, 30, 0.5)' : 'rgba(96, 176, 214, 0.92)';
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
+    const physicalDetail = layer === 'PHYSICAL' || layer === 'BIOMES';
+    if (physicalDetail) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      for (let y = 0; y < state.config.height; y++) {
+        for (let x = 0; x < state.config.width; x++) {
           const tile = state.grid[y][x];
-          if (tile.isWater || tile.riverFlow <= 0.08) continue;
-          const flow = clamp01(tile.riverFlow);
-          const w = Math.max(0.9, px * (0.1 + flow * 0.3));
-          ctx.lineWidth = pass === 0 ? w + Math.max(1.2, px * 0.09) : w;
-
           const cx = (x + 0.5) * px;
           const cy = (y + 0.5) * px;
-          const dirX = Math.cos(tile.riverDirection);
-          const dirY = Math.sin(tile.riverDirection);
+          if (tile.isLake) {
+            ctx.fillStyle = 'rgba(44, 119, 145, 0.82)';
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, px * 0.32, px * 0.23, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          if (tile.riverFlow > 0.035) {
+            const angle = Number.isFinite(tile.riverDirection) ? tile.riverDirection : 0;
+            const len = px * (0.28 + Math.min(0.42, tile.riverFlow * 0.7));
+            ctx.strokeStyle = `rgba(77, 159, 185, ${0.42 + Math.min(0.35, tile.riverFlow)})`;
+            ctx.lineWidth = Math.max(0.7, Math.min(1.8, 0.65 + tile.riverFlow * 1.5));
+            ctx.beginPath();
+            ctx.moveTo(cx - Math.cos(angle) * len * 0.45, cy - Math.sin(angle) * len * 0.45);
+            ctx.lineTo(cx + Math.cos(angle) * len, cy + Math.sin(angle) * len);
+            ctx.stroke();
+          }
+        }
+      }
+      ctx.restore();
+    }
 
+    ctx.save();
+    for (let y = 0; y < state.config.height; y++) {
+      for (let x = 0; x < state.config.width; x++) {
+        const tile = state.grid[y][x];
+        const cx = (x + 0.5) * px;
+        const cy = (y + 0.5) * px;
+        if (tile.settlementId) {
+          ctx.fillStyle = 'rgba(235, 178, 88, 0.92)';
           ctx.beginPath();
-          ctx.moveTo(cx - dirX * px * 0.5, cy - dirY * px * 0.5);
-          ctx.quadraticCurveTo(cx, cy, cx + dirX * px * 0.55, cy + dirY * px * 0.55);
+          ctx.arc(cx, cy, Math.max(1, px * 0.16), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (tile.ruins.length > 0 && (layer === 'PHYSICAL' || layer === 'RUINS_ARCHAEOLOGY')) {
+          ctx.strokeStyle = 'rgba(178, 145, 224, 0.8)';
+          ctx.lineWidth = 1;
+          const s = Math.max(1.4, px * 0.18);
+          ctx.beginPath();
+          ctx.moveTo(cx - s, cy - s);
+          ctx.lineTo(cx + s, cy + s);
+          ctx.moveTo(cx + s, cy - s);
+          ctx.lineTo(cx - s, cy + s);
           ctx.stroke();
         }
       }
     }
     ctx.restore();
   }
-
-  /** Roads and worked land, drawn only where infrastructure actually exists. */
-  private paintInfrastructure(ctx: CanvasRenderingContext2D, state: WorldState) {
-    const px = this.pxPerTile;
-    const { width, height } = state.config;
-    ctx.save();
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const tile = state.grid[y][x];
-        if (tile.infrastructureLevel <= 0 || tile.isWater) continue;
-        const level = Math.min(3, tile.infrastructureLevel);
-        const cx = (x + 0.5) * px;
-        const cy = (y + 0.5) * px;
-
-        // Cultivated ground reads as a warm, ordered patch.
-        ctx.fillStyle = `rgba(168, 142, 82, ${0.1 + level * 0.07})`;
-        ctx.fillRect(cx - px * 0.5, cy - px * 0.5, px, px);
-
-        // Roads connect to whichever neighbours are also developed.
-        ctx.strokeStyle = `rgba(206, 186, 148, ${0.22 + level * 0.16})`;
-        ctx.lineWidth = Math.max(0.8, px * 0.06 * level);
-        ctx.beginPath();
-        for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [-1, 1]]) {
-          const nx = ((x + dx) % width + width) % width;
-          const ny = y + dy;
-          if (ny < 0 || ny >= height) continue;
-          const n = state.grid[ny][nx];
-          if (n.isWater || n.infrastructureLevel <= 0) continue;
-          ctx.moveTo(cx, cy);
-          ctx.lineTo(cx + dx * px, cy + dy * px);
-        }
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
-  }
-
-  /**
-   * Settlement and ruin footprints. These are baked into the surface so the hero 3D views
-   * show civilisation accumulating on the planet itself, not only in the 2D atlas.
-   */
-  private paintSettlements(ctx: CanvasRenderingContext2D, state: WorldState, layer: SurfaceLayer) {
-    const px = this.pxPerTile;
-    const seed = state.config.seed | 0;
-    ctx.save();
-
-    // Ruin fields live on the tiles that contain them, so they are read from the grid.
-    for (let ry = 0; ry < state.config.height; ry++) {
-      for (let rx = 0; rx < state.config.width; rx++) {
-        const ruinTile = state.grid[ry][rx];
-        if (ruinTile.ruins.length === 0) continue;
-        const cx = (rx + 0.5) * px;
-        const cy = (ry + 0.5) * px;
-        const decay = clamp01(ruinTile.ruins[0].decayLevel);
-        ctx.fillStyle = `rgba(126, 112, 146, ${0.55 - decay * 0.3})`;
-        for (let i = 0; i < 6; i++) {
-          const a = visualNoise(seed, rx * 7 + i, ry * 13, 101) * Math.PI * 2;
-          const rad = visualNoise(seed, rx + i, ry * 3, 103) * px * 0.42;
-          const s = px * (0.1 + visualNoise(seed, i, rx + ry, 107) * 0.1);
-          ctx.fillRect(cx + Math.cos(a) * rad - s / 2, cy + Math.sin(a) * rad - s / 2, s, s * 0.8);
-        }
-      }
-    }
-
-    for (const settlement of Object.values(state.settlements)) {
-      const cx = (settlement.tileX + 0.5) * px;
-      const cy = (settlement.tileY + 0.5) * px;
-      const scale = clamp01(Math.log10(Math.max(10, settlement.population)) / 6);
-      const radius = px * (0.28 + scale * 0.72);
-
-      if (settlement.isAbandoned) {
-        ctx.fillStyle = 'rgba(96, 92, 104, 0.42)';
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius * 0.7, 0, Math.PI * 2);
-        ctx.fill();
-        continue;
-      }
-
-      // Built ground: a warm, slightly irregular footprint sized by real population.
-      const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 1.6);
-      halo.addColorStop(0, `rgba(238, 196, 132, ${0.5 + scale * 0.35})`);
-      halo.addColorStop(0.55, `rgba(186, 146, 92, ${0.28 + scale * 0.2})`);
-      halo.addColorStop(1, 'rgba(150, 120, 78, 0)');
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius * 1.6, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Structure grain: deterministic per settlement id, denser for larger tiers.
-      const blocks = 4 + Math.round(scale * 12);
-      const idHash = hashHue(settlement.id);
-      ctx.fillStyle = layer === 'SETTLEMENTS' ? 'rgba(255, 226, 176, 0.95)' : 'rgba(246, 214, 164, 0.8)';
-      for (let i = 0; i < blocks; i++) {
-        const a = visualNoise(seed, idHash + i, settlement.tileY, 113) * Math.PI * 2;
-        const rad = Math.sqrt(visualNoise(seed, idHash, i, 117)) * radius;
-        const s = Math.max(1, px * (0.07 + scale * 0.1));
-        ctx.fillRect(cx + Math.cos(a) * rad - s / 2, cy + Math.sin(a) * rad - s / 2, s, s);
-      }
-    }
-    ctx.restore();
-  }
 }
-
-export { visualNoise, fbm as visualFbm, BIOME_RGB };
