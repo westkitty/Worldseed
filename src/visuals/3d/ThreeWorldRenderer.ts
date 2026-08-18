@@ -1,7 +1,19 @@
-// Genuine WebGL True 3D World Renderer using Three.js (CC0-1.0)
+// WORLDSEED — WebGL hero-view renderer (Three.js)
+//
+// Composition rules:
+//  * The planet is the subject. Every mode frames it large, lit from one consistent sun,
+//    against restrained space.
+//  * Expensive GPU resources are created once per view build. A simulation tick only
+//    repaints the shared surface canvas and flags the existing texture for re-upload.
+//  * Visual variation is deterministic (derived from the world seed) so a reloaded or
+//    restored world looks identical.
 
 import * as THREE from 'three';
 import { WorldState, WorldViewMode } from '../../types/simulation';
+import { PlanetSurfaceCompositor, SurfaceLayer, visualNoise } from '../terrain/planetSurface';
+
+const GLOBE_RADIUS = 18;
+const SNOW_RADIUS = 13;
 
 export class ThreeWorldRenderer {
   private container: HTMLElement;
@@ -10,28 +22,45 @@ export class ThreeWorldRenderer {
   private camera: THREE.PerspectiveCamera | null = null;
   private animFrameId: number | null = null;
 
+  private worldGroup: THREE.Group | null = null;
   private surfaceMesh: THREE.Mesh | null = null;
-  private baseMesh: THREE.Mesh | null = null;
+  private reliefMesh: THREE.Mesh | null = null;
+  private oceanPlane: THREE.Mesh | null = null;
+  private atmosphereMesh: THREE.Mesh | null = null;
   private cloudMesh: THREE.Mesh | null = null;
   private glassDomeMesh: THREE.Mesh | null = null;
-  private reliefMesh: THREE.Mesh | null = null;
+  private baseMesh: THREE.Mesh | null = null;
   private moonMesh: THREE.Mesh | null = null;
   private starfieldPoints: THREE.Points | null = null;
   private particleSystem: THREE.Points | null = null;
-  private worldTexture: THREE.CanvasTexture | null = null;
+  private snowVelocity: Float32Array | null = null;
 
-  public rotX = 0.3;
-  public rotY = 0.0;
-  public zoomDistance = 50;
-  private targetZoom = 50;
+  private sunLight: THREE.DirectionalLight | null = null;
+  private rimLight: THREE.DirectionalLight | null = null;
+
+  private compositor = new PlanetSurfaceCompositor(10);
+  private worldTexture: THREE.CanvasTexture | null = null;
+  private lastSurfaceRevision = -1;
+
+  public rotX = 0.28;
+  public rotY = 0.6;
+  public zoomDistance = 46;
+  private targetZoom = 46;
 
   private currentViewMode: WorldViewMode | null = null;
   private currentDimensions = '';
   private raycaster = new THREE.Raycaster();
   private mouseVec = new THREE.Vector2();
+  private clock = 0;
+  private reducedMotion = false;
+  private selectionMarker: THREE.Mesh | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
+    this.reducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.init();
   }
 
@@ -41,18 +70,32 @@ export class ThreeWorldRenderer {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
     this.renderer.domElement.dataset.worldseedRenderer = 'three';
+    this.renderer.domElement.style.display = 'block';
     this.container.appendChild(this.renderer.domElement);
 
-    this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    this.camera = new THREE.PerspectiveCamera(38, width / height, 0.5, 4000);
     this.camera.position.set(0, 0, this.zoomDistance);
 
     this.scene = new THREE.Scene();
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const dirLight = new THREE.DirectionalLight(0xfffaed, 1.2);
-    dirLight.position.set(60, 40, 50);
-    this.scene.add(dirLight);
+    this.worldGroup = new THREE.Group();
+    this.scene.add(this.worldGroup);
+
+    // A single sun plus a cool bounce keeps every mode lit the same way, which is what
+    // makes the six presentation modes feel like one planet.
+    // The sun sits above and slightly behind the default camera position, so the hero face
+    // of the planet is lit and the terminator falls near the limb rather than across the
+    // middle of the subject. A cool fill from below keeps the shadowed side readable.
+    this.scene.add(new THREE.AmbientLight(0x3d5170, 1.85));
+    this.sunLight = new THREE.DirectionalLight(0xfff4e2, 2.35);
+    this.sunLight.position.set(-16, 44, 58);
+    this.scene.add(this.sunLight);
+    this.rimLight = new THREE.DirectionalLight(0x74a9ff, 0.5);
+    this.rimLight.position.set(48, -34, -30);
+    this.scene.add(this.rimLight);
 
     this.createStarfield();
     this.startLoop();
@@ -60,208 +103,485 @@ export class ThreeWorldRenderer {
 
   private createStarfield() {
     if (!this.scene) return;
-    const starGeo = new THREE.BufferGeometry();
-    const count = 1200;
+    const count = 900;
     const positions = new Float32Array(count * 3);
-    for (let i = 0; i < count * 3; i += 3) {
-      positions[i] = (Math.random() - 0.5) * 500;
-      positions[i + 1] = (Math.random() - 0.5) * 500;
-      positions[i + 2] = (Math.random() - 0.5) * 500;
+    const sizes = new Float32Array(count);
+    // Deterministic star placement: the sky is the same every session.
+    for (let i = 0; i < count; i++) {
+      const u = visualNoise(9176, i, 1, 3);
+      const v = visualNoise(9176, i, 2, 5);
+      const theta = u * Math.PI * 2;
+      const phi = Math.acos(2 * v - 1);
+      const r = 900;
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = r * Math.cos(phi);
+      sizes[i] = 0.6 + visualNoise(9176, i, 3, 7) * 2.4;
     }
-    starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
     this.starfieldPoints = new THREE.Points(
-      starGeo,
-      new THREE.PointsMaterial({ color: 0x94a3b8, size: 1.2, transparent: true, opacity: 0.6 })
+      geo,
+      new THREE.PointsMaterial({ color: 0xdfe8f8, size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0.7, depthWrite: false })
     );
     this.scene.add(this.starfieldPoints);
   }
 
-  private biomeColor(biome: string): string {
-    const colors: Record<string, string> = {
-      DEEP_OCEAN: '#0284c7', SHALLOW_OCEAN: '#38bdf8', HYDROTHERMAL_RIFT: '#dc2626',
-      COASTAL_REEF: '#06b6d4', TUNDRA: '#e2e8f0', TAIGA: '#334155',
-      TEMPERATE_FOREST: '#15803d', TEMPERATE_GRASSLAND: '#65a30d', TROPICAL_RAINFOREST: '#14532d',
-      SAVANNA: '#ca8a04', HOT_DESERT: '#eab308', COLD_DESERT: '#94a3b8',
-      WETLAND: '#047857', ALPINE: '#f8fafc', VOLCANIC_BARREN: '#451a03'
-    };
-    return colors[biome] || '#15803d';
+  /** Signature of everything the surface image depends on. Cheap to compute per tick. */
+  private surfaceSignature(state: WorldState): string {
+    let settlementLoad = 0;
+    for (const s of Object.values(state.settlements)) settlementLoad += s.population + (s.isAbandoned ? 1e6 : 0);
+    return [
+      state.config.seed,
+      Math.floor(state.currentYear / 5),
+      Object.keys(state.settlements).length,
+      Object.keys(state.polities).length,
+      Math.round(settlementLoad / 50),
+      Math.round(state.stats.globalAvgTemperature * 4),
+      Math.round(state.stats.forestCoverPercentage)
+    ].join(':');
   }
 
-  private hashHue(value: string): number {
-    let hash = 0;
-    for (let i = 0; i < value.length; i++) hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
-    return Math.abs(hash) % 360;
-  }
+  private refreshSurface(state: WorldState, layer: SurfaceLayer) {
+    const result = this.compositor.compose(state, layer, this.surfaceSignature(state));
 
-  private layerColor(state: WorldState, tile: WorldState['grid'][number][number], layer: string): string {
-    switch (layer) {
-      case 'TEMPERATURE': {
-        const t = THREE.MathUtils.clamp((tile.currentTemp + 35) / 85, 0, 1);
-        return `hsl(${220 - t * 220} 82% 52%)`;
-      }
-      case 'RAINFALL': {
-        const r = THREE.MathUtils.clamp(tile.rainfall, 0, 1);
-        return `hsl(${210 - r * 25} 86% ${22 + r * 48}%)`;
-      }
-      case 'BIODIVERSITY': {
-        const activity = THREE.MathUtils.clamp((tile.biomass / 1000 + tile.vegetationDensity) / 2, 0, 1);
-        return `hsl(${25 + activity * 115} 72% ${26 + activity * 34}%)`;
-      }
-      case 'POLITICAL':
-        return tile.polityId ? `hsl(${this.hashHue(tile.polityId)} 68% 50%)` : (tile.isWater ? '#0c4a6e' : '#334155');
-      case 'SETTLEMENTS':
-        return tile.settlementId ? '#f59e0b' : (tile.infrastructureLevel > 0 ? '#a16207' : (tile.isWater ? '#0c4a6e' : '#1f2937'));
-      case 'CULTURES':
-        return tile.dominantCultureId ? (state.cultures[tile.dominantCultureId]?.colorHex || `hsl(${this.hashHue(tile.dominantCultureId)} 62% 50%)`) : (tile.isWater ? '#0c4a6e' : '#334155');
-      case 'LANGUAGES': {
-        const languageId = tile.dominantCultureId ? state.cultures[tile.dominantCultureId]?.languageId : undefined;
-        return languageId ? `hsl(${this.hashHue(languageId)} 68% 52%)` : (tile.isWater ? '#0c4a6e' : '#334155');
-      }
-      case 'DISEASES':
-        return tile.activeContagionIds.length > 0 ? '#ef4444' : (tile.isWater ? '#0c4a6e' : '#1f2937');
-      case 'RUINS_ARCHAEOLOGY':
-        return tile.ruins.length > 0 || tile.fossils.length > 0 ? '#a855f7' : (tile.isWater ? '#0c4a6e' : '#292524');
-      case 'ENVIRONMENTAL_SCARS': {
-        const damage = THREE.MathUtils.clamp(Math.max(tile.environmentalDamage, tile.pollution, tile.erosionLevel), 0, 1);
-        return damage > 0.05 ? `hsl(${42 - damage * 42} 82% ${48 - damage * 18}%)` : this.biomeColor(tile.biome);
-      }
-      default:
-        return this.biomeColor(tile.biome);
-    }
-  }
-
-  private createWorldTexture(state: WorldState, layer: string): THREE.CanvasTexture {
-    const width = state.config.width;
-    const height = state.config.height;
-    const canvas = document.createElement('canvas');
-    canvas.width = width * 8;
-    canvas.height = height * 8;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('WORLDSEED could not create the 3D world texture canvas.');
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const tile = state.grid[y]?.[x];
-        if (!tile) continue;
-        ctx.fillStyle = this.layerColor(state, tile, layer);
-        ctx.fillRect(x * 8, y * 8, 8, 8);
-      }
+    if (!this.worldTexture || this.worldTexture.image !== result.canvas) {
+      this.worldTexture?.dispose();
+      this.worldTexture = new THREE.CanvasTexture(result.canvas);
+      this.worldTexture.wrapS = THREE.RepeatWrapping;
+      this.worldTexture.wrapT = THREE.ClampToEdgeWrapping;
+      this.worldTexture.colorSpace = THREE.SRGBColorSpace;
+      this.worldTexture.anisotropy = this.renderer?.capabilities.getMaxAnisotropy() ?? 1;
+      this.worldTexture.minFilter = THREE.LinearMipmapLinearFilter;
+      this.worldTexture.magFilter = THREE.LinearFilter;
+      this.lastSurfaceRevision = -1;
     }
 
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.needsUpdate = true;
-    return texture;
-  }
-
-  private replaceWorldTexture(state: WorldState, layer: string) {
-    const nextTexture = this.createWorldTexture(state, layer);
-    const oldTexture = this.worldTexture;
-    this.worldTexture = nextTexture;
-
-    for (const mesh of [this.surfaceMesh, this.reliefMesh]) {
-      if (!mesh) continue;
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const material of materials) {
-        if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial) {
-          material.map = nextTexture;
-          material.needsUpdate = true;
-        }
-      }
+    if (result.revision !== this.lastSurfaceRevision) {
+      this.lastSurfaceRevision = result.revision;
+      this.worldTexture.needsUpdate = true;
     }
-    oldTexture?.dispose();
+
+    return this.worldTexture;
   }
 
-  public updateScene(state: WorldState, viewMode: WorldViewMode, layer = 'PHYSICAL') {
-    if (!this.scene) return;
+  public updateScene(state: WorldState, viewMode: WorldViewMode, layer: SurfaceLayer = 'PHYSICAL') {
+    if (!this.scene || !this.worldGroup) return;
 
     const dimensions = `${state.config.width}x${state.config.height}`;
-    const needsRebuild = this.currentViewMode !== viewMode || this.currentDimensions !== dimensions || (!this.surfaceMesh && !this.reliefMesh);
+    const texture = this.refreshSurface(state, layer);
+    const needsRebuild = this.currentViewMode !== viewMode || this.currentDimensions !== dimensions;
 
     if (!needsRebuild) {
-      this.replaceWorldTexture(state, layer);
+      // Live update path: no geometry, material or texture object is recreated.
       if (this.reliefMesh) this.updateReliefGeometry(state);
       return;
     }
 
     this.clearWorldMeshes();
-    this.worldTexture?.dispose();
-    this.worldTexture = this.createWorldTexture(state, layer);
     this.currentViewMode = viewMode;
     this.currentDimensions = dimensions;
 
     if (viewMode === 'GLOBE' || viewMode === 'ORBITAL_VIEW') {
-      const radius = 18;
-      this.surfaceMesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 48), new THREE.MeshStandardMaterial({ map: this.worldTexture, roughness: 0.7, metalness: 0.1 }));
-      this.scene.add(this.surfaceMesh);
-
-      this.cloudMesh = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.025, 32, 32), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.2, depthWrite: false, roughness: 0.9 }));
-      this.scene.add(this.cloudMesh);
-
-      if (viewMode === 'ORBITAL_VIEW') {
-        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(3.5, 24, 24), new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.8 }));
-        this.moonMesh.position.set(38, 12, -15);
-        this.scene.add(this.moonMesh);
-      }
+      this.buildGlobe(texture, viewMode === 'ORBITAL_VIEW');
     } else if (viewMode === 'SNOW_GLOBE') {
-      const radius = 14;
-      this.baseMesh = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.2, radius * 1.4, 5, 32), new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.5 }));
-      this.baseMesh.position.set(0, -radius - 2, 0);
-      this.scene.add(this.baseMesh);
+      this.buildSnowGlobe(texture, state);
+    } else {
+      this.buildRelief(texture, state);
+    }
 
-      this.surfaceMesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 40, 40), new THREE.MeshStandardMaterial({ map: this.worldTexture, roughness: 0.8 }));
-      this.scene.add(this.surfaceMesh);
+    this.frameView(viewMode);
+  }
 
-      this.glassDomeMesh = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.35, 40, 40), new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, roughness: 0.05, transmission: 0.88, ior: 1.4, depthWrite: false }));
-      this.glassDomeMesh.renderOrder = 10;
-      this.scene.add(this.glassDomeMesh);
+  private buildGlobe(texture: THREE.Texture, orbital: boolean) {
+    if (!this.worldGroup) return;
 
-      const snowCount = 400;
-      const snowGeo = new THREE.BufferGeometry();
-      const snowPos = new Float32Array(snowCount * 3);
-      for (let i = 0; i < snowCount * 3; i += 3) {
-        const u = Math.random();
-        const v = Math.random();
-        const theta = u * 2 * Math.PI;
-        const phi = Math.acos(2 * v - 1);
-        const r = Math.cbrt(Math.random()) * (radius * 1.2);
-        snowPos[i] = r * Math.sin(phi) * Math.cos(theta);
-        snowPos[i + 1] = r * Math.sin(phi) * Math.sin(theta);
-        snowPos[i + 2] = r * Math.cos(phi);
-      }
-      snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
-      this.particleSystem = new THREE.Points(snowGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.7, transparent: true, opacity: 0.8, depthWrite: false }));
-      this.scene.add(this.particleSystem);
-    } else if (viewMode === 'RELIEF_DIORAMA' || viewMode === 'SQUARE_TILE') {
-      this.reliefMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(36, 28, Math.max(1, state.config.width - 1), Math.max(1, state.config.height - 1)),
-        new THREE.MeshStandardMaterial({ map: this.worldTexture, roughness: 0.8, metalness: 0.05, side: THREE.DoubleSide })
+    this.surfaceMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(GLOBE_RADIUS, 128, 96),
+      new THREE.MeshStandardMaterial({
+        map: texture,
+        // A bump derived from the same image gives the terminator real surface relief
+        // without shipping or generating a separate height texture.
+        bumpMap: texture,
+        bumpScale: 0.55,
+        roughness: 0.86,
+        metalness: 0.04
+      })
+    );
+    this.worldGroup.add(this.surfaceMesh);
+
+    // Atmosphere: a back-face shell with additive falloff reads as air, not as a glow decal.
+    this.atmosphereMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(GLOBE_RADIUS * 1.055, 64, 48),
+      new THREE.ShaderMaterial({
+        transparent: true,
+        side: THREE.BackSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uColor: { value: new THREE.Color(0x5fb4ff) },
+          uIntensity: { value: orbital ? 1.15 : 0.95 }
+        },
+        vertexShader: `
+          varying vec3 vNormalView;
+          varying vec3 vViewDir;
+          void main() {
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vNormalView = normalize(normalMatrix * normal);
+            vViewDir = normalize(-mvPosition.xyz);
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          uniform float uIntensity;
+          varying vec3 vNormalView;
+          varying vec3 vViewDir;
+          void main() {
+            float rim = 1.0 - abs(dot(normalize(vNormalView), normalize(vViewDir)));
+            float falloff = pow(clamp(rim, 0.0, 1.0), 3.2);
+            gl_FragColor = vec4(uColor * falloff * uIntensity, falloff * 0.9);
+          }
+        `
+      })
+    );
+    this.worldGroup.add(this.atmosphereMesh);
+
+    // Thin, sparse cloud deck. Deterministic, and light enough that terrain stays readable.
+    this.cloudMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(GLOBE_RADIUS * 1.018, 64, 48),
+      new THREE.MeshStandardMaterial({
+        map: this.createCloudTexture(),
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+        roughness: 1
+      })
+    );
+    this.worldGroup.add(this.cloudMesh);
+
+    if (orbital) {
+      this.moonMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(3.6, 48, 32),
+        new THREE.MeshStandardMaterial({ map: this.createMoonTexture(), roughness: 0.95, metalness: 0 })
       );
-      this.reliefMesh.rotation.x = -Math.PI / 3;
-      this.updateReliefGeometry(state);
-      this.scene.add(this.reliefMesh);
+      this.moonMesh.position.set(46, 9, -18);
+      this.worldGroup.add(this.moonMesh);
     }
   }
 
+  private buildSnowGlobe(texture: THREE.Texture, state: WorldState) {
+    if (!this.worldGroup) return;
+
+    this.surfaceMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(SNOW_RADIUS, 96, 72),
+      new THREE.MeshStandardMaterial({ map: texture, bumpMap: texture, bumpScale: 0.4, roughness: 0.88, metalness: 0.03 })
+    );
+    this.surfaceMesh.position.y = 1.5;
+    this.worldGroup.add(this.surfaceMesh);
+
+    // Turned wooden plinth with a brass collar — the object should feel like it sits
+    // on a shelf, so the base has real silhouette rather than a flat disc.
+    const plinth = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({ color: 0x4a2c17, roughness: 0.62, metalness: 0.06 });
+    const brass = new THREE.MeshStandardMaterial({ color: 0xc79a4b, roughness: 0.3, metalness: 0.85 });
+
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(SNOW_RADIUS * 1.02, SNOW_RADIUS * 1.24, 3.1, 64), wood);
+    foot.position.y = -SNOW_RADIUS - 3.4;
+    plinth.add(foot);
+
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(SNOW_RADIUS * 0.99, 0.62, 20, 64), brass);
+    collar.rotation.x = Math.PI / 2;
+    collar.position.y = -SNOW_RADIUS - 1.6;
+    plinth.add(collar);
+
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(SNOW_RADIUS * 0.86, SNOW_RADIUS * 1.0, 1.6, 64), wood);
+    neck.position.y = -SNOW_RADIUS - 1.0;
+    plinth.add(neck);
+
+    this.baseMesh = plinth as unknown as THREE.Mesh;
+    this.worldGroup.add(plinth);
+
+    // Glass: physical transmission with a touch of thickness so the rim refracts.
+    this.glassDomeMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(SNOW_RADIUS * 1.42, 96, 72),
+      new THREE.MeshPhysicalMaterial({
+        color: 0xeaf4ff,
+        transparent: true,
+        opacity: 0.24,
+        roughness: 0.03,
+        transmission: 0.94,
+        thickness: 2.2,
+        ior: 1.48,
+        clearcoat: 1,
+        clearcoatRoughness: 0.02,
+        metalness: 0,
+        depthWrite: false,
+        side: THREE.FrontSide
+      })
+    );
+    this.glassDomeMesh.position.y = 1.5;
+    this.glassDomeMesh.renderOrder = 10;
+    this.worldGroup.add(this.glassDomeMesh);
+
+    // Bounded snow, contained inside the dome and falling under its own gentle gravity.
+    const snowCount = 520;
+    const snowPos = new Float32Array(snowCount * 3);
+    this.snowVelocity = new Float32Array(snowCount);
+    const seed = state.config.seed | 0;
+    for (let i = 0; i < snowCount; i++) {
+      const u = visualNoise(seed, i, 11, 13);
+      const v = visualNoise(seed, i, 17, 19);
+      const w = visualNoise(seed, i, 23, 29);
+      const theta = u * Math.PI * 2;
+      const phi = Math.acos(2 * v - 1);
+      const r = Math.cbrt(w) * SNOW_RADIUS * 1.34;
+      snowPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      snowPos[i * 3 + 1] = r * Math.cos(phi) + 1.5;
+      snowPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+      this.snowVelocity[i] = 0.012 + visualNoise(seed, i, 31, 37) * 0.03;
+    }
+    const snowGeo = new THREE.BufferGeometry();
+    snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
+    this.particleSystem = new THREE.Points(
+      snowGeo,
+      new THREE.PointsMaterial({ color: 0xffffff, size: 0.24, transparent: true, opacity: 0.85, depthWrite: false })
+    );
+    this.worldGroup.add(this.particleSystem);
+  }
+
+  private buildRelief(texture: THREE.Texture, state: WorldState) {
+    if (!this.worldGroup) return;
+    const cols = state.config.width;
+    const rows = state.config.height;
+    const spanX = 42;
+    const spanZ = spanX * (rows / cols);
+
+    this.reliefMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(spanX, spanZ, cols - 1, rows - 1),
+      new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9, metalness: 0.02 })
+    );
+    this.reliefMesh.rotation.x = -Math.PI / 2;
+    this.updateReliefGeometry(state);
+    this.worldGroup.add(this.reliefMesh);
+
+    // A translucent sea plane at exactly the simulation's sea level makes elevation legible.
+    this.oceanPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(spanX, spanZ),
+      new THREE.MeshPhysicalMaterial({
+        color: 0x1b4f7a,
+        transparent: true,
+        opacity: 0.72,
+        roughness: 0.12,
+        metalness: 0.1,
+        transmission: 0.35,
+        thickness: 1.4
+      })
+    );
+    this.oceanPlane.rotation.x = -Math.PI / 2;
+    this.oceanPlane.position.y = 0.02;
+    this.worldGroup.add(this.oceanPlane);
+
+    // Carved slab sides so the diorama reads as a physical object on a table.
+    const slab = new THREE.Mesh(
+      new THREE.BoxGeometry(spanX * 1.02, 2.6, spanZ * 1.02),
+      new THREE.MeshStandardMaterial({ color: 0x2a2f3a, roughness: 0.85, metalness: 0.08 })
+    );
+    slab.position.y = -1.5;
+    this.baseMesh = slab;
+    this.worldGroup.add(slab);
+  }
+
+  /**
+   * Displaces the relief plane from tile elevation.
+   * Simulation elevation is a normalised -1..1 field with sea level near 0.42, so it is
+   * mapped directly into scene units instead of being treated as metres.
+   */
   private updateReliefGeometry(state: WorldState) {
     if (!this.reliefMesh) return;
     const geometry = this.reliefMesh.geometry as THREE.PlaneGeometry;
     const posAttr = geometry.attributes.position as THREE.BufferAttribute;
     const cols = state.config.width;
+    const rows = state.config.height;
+    const seaLevel = state.config.seaLevel;
+    // Vertical exaggeration is deliberate but restrained: enough that valleys, ranges and
+    // coastal shelves read as terrain, not so much that the diorama becomes a bed of needles.
+    const landScale = 5.5;
+    const seaScale = 2.4;
+
     for (let i = 0; i < posAttr.count; i++) {
-      const gridX = i % cols;
-      const gridY = Math.floor(i / cols);
-      const tile = state.grid[Math.min(state.config.height - 1, gridY)]?.[Math.min(state.config.width - 1, gridX)];
-      // Simulation elevation is stored in meter-like values (hundreds/thousands). Convert
-      // that range into deliberate scene units instead of multiplying meters directly,
-      // which previously produced enormous needle mountains and camera clipping.
-      const normalized = tile ? THREE.MathUtils.clamp(tile.elevation / 1800, -0.35, 1.25) : 0;
-      posAttr.setZ(i, normalized * 3.4);
+      const gridX = Math.min(cols - 1, i % cols);
+      const gridY = Math.min(rows - 1, Math.floor(i / cols));
+      const tile = state.grid[gridY]?.[gridX];
+      if (!tile) {
+        posAttr.setZ(i, 0);
+        continue;
+      }
+      const rel = tile.elevation - seaLevel;
+      posAttr.setZ(i, rel >= 0 ? rel * landScale : rel * seaScale);
     }
     posAttr.needsUpdate = true;
     geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+  }
+
+  /** Cloud deck generated once, deterministically, at a modest resolution. */
+  private createCloudTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d')!;
+    const image = ctx.createImageData(canvas.width, canvas.height);
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        let v = 0;
+        let amp = 0.5;
+        let freq = 3;
+        for (let o = 0; o < 5; o++) {
+          const nx = (x / canvas.width) * freq;
+          const ny = (y / canvas.height) * freq;
+          v += amp * this.smoothNoise(nx, ny, o);
+          amp *= 0.5;
+          freq *= 2.1;
+        }
+        // Banded latitudes: clouds gather in convergence zones rather than uniformly.
+        const lat = Math.abs(y / canvas.height - 0.5) * 2;
+        const band = 0.55 + 0.45 * Math.cos(lat * Math.PI * 2.4);
+        const a = Math.max(0, Math.min(1, (v * band - 0.42) * 3.2));
+        const idx = (y * canvas.width + x) * 4;
+        image.data[idx] = 255;
+        image.data[idx + 1] = 255;
+        image.data[idx + 2] = 255;
+        image.data[idx + 3] = a * 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  private createMoonTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#8b8f98';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < 90; i++) {
+      const x = visualNoise(4231, i, 1, 2) * canvas.width;
+      const y = visualNoise(4231, i, 2, 3) * canvas.height;
+      const r = 1.5 + visualNoise(4231, i, 3, 4) * 9;
+      ctx.fillStyle = `rgba(${90 + visualNoise(4231, i, 4, 5) * 40}, ${94 + visualNoise(4231, i, 5, 6) * 40}, ${102 + visualNoise(4231, i, 6, 7) * 40}, 0.7)`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  private smoothNoise(x: number, y: number, channel: number): number {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const xf = x - xi;
+    const yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf);
+    const v = yf * yf * (3 - 2 * yf);
+    const n00 = visualNoise(7717, xi, yi, channel);
+    const n10 = visualNoise(7717, xi + 1, yi, channel);
+    const n01 = visualNoise(7717, xi, yi + 1, channel);
+    const n11 = visualNoise(7717, xi + 1, yi + 1, channel);
+    return (n00 * (1 - u) + n10 * u) * (1 - v) + (n01 * (1 - u) + n11 * u) * v;
+  }
+
+  /**
+   * Camera distance that fits a sphere of `radius` inside the smaller viewport axis with
+   * `margin` headroom (1.0 = exactly touching the edges).
+   */
+  private distanceToFit(radius: number, margin: number): number {
+    const camera = this.camera;
+    if (!camera) return radius * 3;
+    const vFov = (camera.fov * Math.PI) / 180;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    const limiting = Math.min(vFov, hFov);
+    return (radius * margin) / Math.tan(limiting / 2);
+  }
+
+  /** Per-mode camera framing so each hero view is composed rather than merely displayed. */
+  private frameView(viewMode: WorldViewMode) {
+    switch (viewMode) {
+      // Framing is derived from the subject's radius and the camera's field of view so the
+      // planet is large but never cropped by the viewport.
+      case 'GLOBE':
+        this.targetZoom = this.distanceToFit(GLOBE_RADIUS, 1.32);
+        this.rotX = 0.26;
+        break;
+      case 'ORBITAL_VIEW':
+        this.targetZoom = this.distanceToFit(GLOBE_RADIUS, 2.6);
+        this.rotX = 0.14;
+        break;
+      case 'SNOW_GLOBE':
+        this.targetZoom = this.distanceToFit(SNOW_RADIUS * 1.42, 1.5);
+        this.rotX = 0.16;
+        break;
+      default:
+        this.targetZoom = this.distanceToFit(23, 1.08);
+        this.rotX = 0.62;
+        break;
+    }
+    this.zoomDistance = this.targetZoom;
+  }
+
+  public setSelection(state: WorldState, tile: { x: number; y: number } | null) {
+    if (!this.worldGroup) return;
+    if (!tile) {
+      if (this.selectionMarker) {
+        this.disposeObject(this.selectionMarker, this.worldGroup);
+        this.selectionMarker = null;
+      }
+      return;
+    }
+
+    if (!this.selectionMarker) {
+      this.selectionMarker = new THREE.Mesh(
+        new THREE.RingGeometry(0.62, 0.92, 40),
+        new THREE.MeshBasicMaterial({ color: 0x6fd0ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false })
+      );
+      this.selectionMarker.renderOrder = 20;
+      this.worldGroup.add(this.selectionMarker);
+    }
+
+    const { width, height } = state.config;
+    const u = (tile.x + 0.5) / width;
+    const v = (tile.y + 0.5) / height;
+
+    if (this.reliefMesh) {
+      const geo = this.reliefMesh.geometry as THREE.PlaneGeometry;
+      const params = geo.parameters;
+      const px = (u - 0.5) * params.width;
+      const pz = (v - 0.5) * params.height;
+      const t = state.grid[tile.y]?.[tile.x];
+      const rel = t ? t.elevation - state.config.seaLevel : 0;
+      this.selectionMarker.position.set(px, (rel >= 0 ? rel * 5.5 : rel * 2.4) + 0.3, pz);
+      this.selectionMarker.rotation.set(-Math.PI / 2, 0, 0);
+      this.selectionMarker.scale.setScalar(1);
+    } else if (this.surfaceMesh) {
+      const radius = (this.surfaceMesh.geometry as THREE.SphereGeometry).parameters.radius;
+      const lon = (u - 0.5) * Math.PI * 2;
+      const lat = (0.5 - v) * Math.PI;
+      const normal = new THREE.Vector3(
+        Math.cos(lat) * Math.sin(lon + Math.PI),
+        Math.sin(lat),
+        Math.cos(lat) * Math.cos(lon + Math.PI)
+      ).normalize();
+      this.selectionMarker.position.copy(normal.clone().multiplyScalar(radius * 1.012)).add(this.surfaceMesh.position);
+      this.selectionMarker.lookAt(this.selectionMarker.position.clone().add(normal));
+      this.selectionMarker.scale.setScalar(radius / 18);
+    }
   }
 
   public pickTile(clientX: number, clientY: number, state: WorldState): { x: number; y: number } | null {
@@ -284,12 +604,12 @@ export class ThreeWorldRenderer {
     const u = (tileX + 0.5) / width;
     const v = (tileY + 0.5) / height;
     this.rotY = -(u - 0.5) * Math.PI * 2 - Math.PI / 2;
-    this.rotX = Math.max(-1.35, Math.min(1.35, (0.5 - v) * Math.PI * 0.9));
+    this.rotX = Math.max(-1.2, Math.min(1.2, (0.5 - v) * Math.PI * 0.8));
   }
 
-  private disposeObject(object: THREE.Object3D | null) {
+  private disposeObject(object: THREE.Object3D | null, parent?: THREE.Object3D) {
     if (!object) return;
-    this.scene?.remove(object);
+    (parent ?? this.worldGroup ?? this.scene)?.remove(object);
     object.traverse(child => {
       const mesh = child as THREE.Mesh;
       mesh.geometry?.dispose();
@@ -300,54 +620,106 @@ export class ThreeWorldRenderer {
   }
 
   private clearWorldMeshes() {
-    this.disposeObject(this.surfaceMesh);
-    this.disposeObject(this.baseMesh);
-    this.disposeObject(this.cloudMesh);
-    this.disposeObject(this.glassDomeMesh);
-    this.disposeObject(this.reliefMesh);
-    this.disposeObject(this.moonMesh);
-    this.disposeObject(this.particleSystem);
+    for (const mesh of [
+      this.surfaceMesh,
+      this.reliefMesh,
+      this.oceanPlane,
+      this.atmosphereMesh,
+      this.cloudMesh,
+      this.glassDomeMesh,
+      this.baseMesh,
+      this.moonMesh,
+      this.particleSystem,
+      this.selectionMarker
+    ]) {
+      this.disposeObject(mesh);
+    }
     this.surfaceMesh = null;
-    this.baseMesh = null;
+    this.reliefMesh = null;
+    this.oceanPlane = null;
+    this.atmosphereMesh = null;
     this.cloudMesh = null;
     this.glassDomeMesh = null;
-    this.reliefMesh = null;
+    this.baseMesh = null;
     this.moonMesh = null;
     this.particleSystem = null;
+    this.selectionMarker = null;
+    this.snowVelocity = null;
   }
 
   private startLoop() {
+    let last = typeof performance !== 'undefined' ? performance.now() : 0;
     const loop = () => {
       this.animFrameId = requestAnimationFrame(loop);
-      this.zoomDistance += (this.targetZoom - this.zoomDistance) * 0.1;
+      const now = typeof performance !== 'undefined' ? performance.now() : last + 16;
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      this.clock += dt;
+
+      this.zoomDistance += (this.targetZoom - this.zoomDistance) * Math.min(1, dt * 9);
       if (this.camera) {
         this.camera.position.x = this.zoomDistance * Math.sin(this.rotY) * Math.cos(this.rotX);
         this.camera.position.y = this.zoomDistance * Math.sin(this.rotX);
         this.camera.position.z = this.zoomDistance * Math.cos(this.rotY) * Math.cos(this.rotX);
-        this.camera.lookAt(0, 0, 0);
+        this.camera.lookAt(0, this.reliefMesh ? 0 : 0, 0);
       }
-      if (this.cloudMesh) this.cloudMesh.rotation.y += 0.0008;
-      if (this.moonMesh) this.moonMesh.rotation.y += 0.003;
-      if (this.particleSystem) this.particleSystem.rotation.y += 0.002;
+
+      if (!this.reducedMotion) {
+        if (this.cloudMesh) this.cloudMesh.rotation.y += dt * 0.012;
+        if (this.moonMesh) {
+          const a = this.clock * 0.06;
+          this.moonMesh.position.set(Math.cos(a) * 52, 9 + Math.sin(a * 0.7) * 5, Math.sin(a) * 52);
+          this.moonMesh.rotation.y += dt * 0.05;
+        }
+        this.updateSnow(dt);
+      }
+
       if (this.renderer && this.scene && this.camera) this.renderer.render(this.scene, this.camera);
     };
     this.animFrameId = requestAnimationFrame(loop);
   }
 
+  private updateSnow(dt: number) {
+    if (!this.particleSystem || !this.snowVelocity) return;
+    const geo = this.particleSystem.geometry as THREE.BufferGeometry;
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const floor = -SNOW_RADIUS * 0.98 + 1.5;
+    const ceiling = SNOW_RADIUS * 1.3 + 1.5;
+    for (let i = 0; i < pos.count; i++) {
+      let y = pos.getY(i) - this.snowVelocity[i] * dt * 60 * 0.06;
+      if (y < floor) y = ceiling;
+      pos.setY(i, y);
+    }
+    pos.needsUpdate = true;
+    this.particleSystem.rotation.y += dt * 0.04;
+  }
+
   public resize(width: number, height: number) {
     if (!this.renderer || !this.camera || width <= 0 || height <= 0) return;
+    const previousAspect = this.camera.aspect;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
+    // A narrower window makes the horizontal field of view the limiting one, so the framing
+    // has to be recomputed or the planet gets cropped.
+    if (this.currentViewMode && Math.abs(previousAspect - this.camera.aspect) > 0.001) {
+      this.frameView(this.currentViewMode);
+    }
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setSize(width, height, false);
+    this.renderer.domElement.style.width = `${width}px`;
+    this.renderer.domElement.style.height = `${height}px`;
   }
 
   public rotate(deltaX: number, deltaY: number) {
-    this.rotY += deltaX * 0.01;
-    this.rotX = Math.max(-1.4, Math.min(1.4, this.rotX + deltaY * 0.01));
+    this.rotY += deltaX * 0.008;
+    this.rotX = Math.max(-1.35, Math.min(1.35, this.rotX + deltaY * 0.008));
   }
 
   public zoom(delta: number) {
-    this.targetZoom = Math.max(22, Math.min(120, this.targetZoom + delta * 0.05));
+    const isRelief = !!this.reliefMesh;
+    const min = isRelief ? 26 : 24;
+    const max = isRelief ? 120 : 220;
+    this.targetZoom = Math.max(min, Math.min(max, this.targetZoom * (1 + delta * 0.0012)));
   }
 
   public getRendererInfo() {
@@ -359,19 +731,28 @@ export class ThreeWorldRenderer {
     this.animFrameId = null;
     this.clearWorldMeshes();
     if (this.starfieldPoints) {
-      this.disposeObject(this.starfieldPoints);
+      this.disposeObject(this.starfieldPoints, this.scene ?? undefined);
       this.starfieldPoints = null;
     }
     this.worldTexture?.dispose();
     this.worldTexture = null;
+    this.compositor.dispose();
+    this.lastSurfaceRevision = -1;
+
     if (this.renderer) {
-      this.renderer.dispose();
       const canvas = this.renderer.domElement;
+      this.renderer.dispose();
+      // Explicitly release the WebGL context; browsers cap the number of live contexts and
+      // WORLDSEED allows unlimited view switching.
+      this.renderer.forceContextLoss();
       if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
     }
     this.renderer = null;
     this.scene = null;
     this.camera = null;
+    this.worldGroup = null;
+    this.sunLight = null;
+    this.rimLight = null;
     this.currentViewMode = null;
     this.currentDimensions = '';
   }

@@ -1,9 +1,33 @@
-// Master 6-Mode World View Presentation Renderer (CC0-1.0)
+// WORLDSEED — 2D cartographic presentation renderer
+//
+// Draws the shared planetary surface image (see visuals/terrain/planetSurface.ts) with
+// per-mode cartographic treatment. Terrain, hydrology, coastlines and settlement
+// footprints all come from that one composited image, so the flat views and the WebGL
+// hero views are unmistakably the same planet.
 
-import { WorldViewMode, WorldState, Tile } from '../../types/simulation';
-import { Camera3D } from './projections';
-import { BiomeTilesetEngine } from '../sprites/biomeTileset';
-import { CivilizationSpriteEngine } from '../sprites/civilizationSprites';
+import { WorldViewMode, WorldState } from '../../types/simulation';
+import { Camera3D, WorldProjectionEngine } from './projections';
+
+export interface SurfaceDrawContext {
+  surface: HTMLCanvasElement | null;
+  selectedTile: { x: number; y: number } | null;
+}
+
+interface Frame {
+  originX: number;
+  originY: number;
+  tileSize: number;
+}
+
+const SETTLEMENT_TIER_RANK: Record<string, number> = {
+  CAMP: 0,
+  HAMLET: 1,
+  VILLAGE: 2,
+  TOWN: 3,
+  CITY: 4,
+  METROPOLIS: 5,
+  MEGALOPOLIS: 6
+};
 
 export class WorldViewRenderer {
   public static renderView(
@@ -14,423 +38,422 @@ export class WorldViewRenderer {
     viewMode: WorldViewMode,
     camera: Camera3D,
     hoveredTile: { x: number; y: number } | null,
-    time: number
+    time: number,
+    draw: SurfaceDrawContext = { surface: null, selectedTile: null }
   ) {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
     switch (viewMode) {
-      case 'FLAT_ATLAS':
-        this.renderFlatAtlas(ctx, canvasWidth, canvasHeight, state, camera, hoveredTile);
-        break;
-
       case 'SQUARE_TILE':
-        this.renderSquareBoard(ctx, canvasWidth, canvasHeight, state, camera, hoveredTile);
+        this.renderSquareWorld(ctx, canvasWidth, canvasHeight, state, camera, hoveredTile, draw);
         break;
-
       case 'GLOBE':
-        this.renderGlobe(ctx, canvasWidth, canvasHeight, state, camera, hoveredTile, false, time);
-        break;
-
       case 'SNOW_GLOBE':
-        this.renderGlobe(ctx, canvasWidth, canvasHeight, state, camera, hoveredTile, true, time);
-        break;
-
-      case 'RELIEF_DIORAMA':
-        this.renderReliefDiorama(ctx, canvasWidth, canvasHeight, state, camera, hoveredTile);
-        break;
-
       case 'ORBITAL_VIEW':
-        this.renderOrbitalView(ctx, canvasWidth, canvasHeight, state, camera, hoveredTile, time);
+        this.renderSphereFallback(ctx, canvasWidth, canvasHeight, state, camera, draw, time);
+        break;
+      default:
+        this.renderFlatAtlas(ctx, canvasWidth, canvasHeight, state, camera, hoveredTile, draw);
         break;
     }
   }
 
-  // 1. FLAT ATLAS
+  private static frameFor(cw: number, ch: number, state: WorldState, camera: Camera3D): Frame {
+    // Shared with the hit test and the minimap so what is drawn is exactly what is clickable.
+    return WorldProjectionEngine.frame(cw, ch, state.config.width, state.config.height, camera);
+  }
+
+  public static frameMetrics(cw: number, ch: number, state: WorldState, camera: Camera3D): Frame {
+    return this.frameFor(cw, ch, state, camera);
+  }
+
+  // ---------------------------------------------------------------- FLAT ATLAS
+
   private static renderFlatAtlas(
     ctx: CanvasRenderingContext2D,
     cw: number,
     ch: number,
     state: WorldState,
     camera: Camera3D,
-    hoveredTile: { x: number; y: number } | null
+    hoveredTile: { x: number; y: number } | null,
+    draw: SurfaceDrawContext
   ) {
-    const { grid, config } = state;
-    const { width, height } = config;
-    const tileSize = (Math.min(cw, ch) / height) * camera.zoom;
-    const originX = (cw - width * tileSize) / 2 + camera.x;
-    const originY = (ch - height * tileSize) / 2 + camera.y;
+    const { width, height } = state.config;
+    const { tileSize, originX, originY } = this.frameFor(cw, ch, state, camera);
+    const mapW = width * tileSize;
+    const mapH = height * tileSize;
 
-    ctx.fillStyle = '#020617';
-    ctx.fillRect(0, 0, cw, ch);
+    this.paintVoid(ctx, cw, ch);
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const tile = grid[y][x];
-        const px = originX + x * tileSize;
-        const py = originY + y * tileSize;
-
-        if (px + tileSize < 0 || px > cw || py + tileSize < 0 || py > ch) continue;
-
-        if (tileSize > 8) {
-          const tileImg = BiomeTilesetEngine.getTileCanvas(tile.biome, x + y * width, x % 4);
-          ctx.drawImage(tileImg, px, py, tileSize + 0.5, tileSize + 0.5);
-        } else {
-          ctx.fillStyle = this.getTileColor(tile);
-          ctx.fillRect(px, py, tileSize + 0.5, tileSize + 0.5);
-        }
-
-        // River flow
-        if (tile.riverFlow > 0.1 && !tile.isWater) {
-          ctx.strokeStyle = '#38bdf8';
-          ctx.lineWidth = Math.max(1.5, tileSize * tile.riverFlow * 0.35);
-          ctx.beginPath();
-          ctx.moveTo(px + tileSize / 2, py + tileSize / 2);
-          ctx.lineTo(
-            px + tileSize / 2 + Math.cos(tile.riverDirection) * (tileSize / 2),
-            py + tileSize / 2 + Math.sin(tile.riverDirection) * (tileSize / 2)
-          );
-          ctx.stroke();
-        }
-
-        // Settlement
-        if (tile.settlementId && state.settlements[tile.settlementId]) {
-          const sett = state.settlements[tile.settlementId];
-          const settCanvas = CivilizationSpriteEngine.getSettlementCanvas(sett, 32);
-          const spriteSize = Math.max(8, tileSize * 0.85);
-          ctx.drawImage(settCanvas, px + (tileSize - spriteSize) / 2, py + (tileSize - spriteSize) / 2, spriteSize, spriteSize);
-        }
-      }
+    if (draw.surface) {
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      // Soft cast shadow so the chart reads as a sheet lying over the void.
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+      ctx.shadowBlur = 34;
+      ctx.shadowOffsetY = 10;
+      ctx.drawImage(draw.surface, originX, originY, mapW, mapH);
+      ctx.restore();
     }
 
-    if (hoveredTile) {
-      const hpx = originX + hoveredTile.x * tileSize;
-      const hpy = originY + hoveredTile.y * tileSize;
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(hpx, hpy, tileSize, tileSize);
-    }
+    this.paintGraticule(ctx, originX, originY, mapW, mapH, tileSize, state);
+    this.paintPlaces(ctx, state, { originX, originY, tileSize }, cw, ch);
+    this.paintTileMarkers(ctx, state, { originX, originY, tileSize }, hoveredTile, draw.selectedTile);
 
-    // Outer frame
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(originX, originY, width * tileSize, height * tileSize);
+    // Neat map border keeps the atlas feeling like a chart, not a bleeding texture.
+    ctx.strokeStyle = 'rgba(150, 180, 214, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(originX + 0.5, originY + 0.5, mapW - 1, mapH - 1);
+
+    this.paintVignette(ctx, cw, ch);
   }
 
-  // 2. SQUARE BOARD
-  private static renderSquareBoard(
-    ctx: CanvasRenderingContext2D,
-    cw: number,
-    ch: number,
-    state: WorldState,
-    camera: Camera3D,
-    hoveredTile: { x: number; y: number } | null
-  ) {
-    const { grid, config } = state;
-    const { width, height } = config;
-    const tileSize = (Math.min(cw, ch) / height) * camera.zoom;
-    const originX = (cw - width * tileSize) / 2 + camera.x;
-    const originY = (ch - height * tileSize) / 2 + camera.y;
+  // ---------------------------------------------------------------- SQUARE WORLD
 
-    // Dark tabletop surface
-    ctx.fillStyle = '#090d16';
-    ctx.fillRect(0, 0, cw, ch);
-
-    // Beveled wood/metal board slab shadow & border
-    const boardPadding = 16;
-    ctx.fillStyle = '#0f172a';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-    ctx.shadowBlur = 30;
-    ctx.shadowOffsetY = 15;
-    ctx.fillRect(originX - boardPadding, originY - boardPadding, width * tileSize + boardPadding * 2, height * tileSize + boardPadding * 2 + 10);
-    ctx.shadowColor = 'transparent';
-
-    ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(originX - boardPadding, originY - boardPadding, width * tileSize + boardPadding * 2, height * tileSize + boardPadding * 2);
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const tile = grid[y][x];
-        const px = originX + x * tileSize;
-        const py = originY + y * tileSize;
-
-        const tileImg = BiomeTilesetEngine.getTileCanvas(tile.biome, x + y * width, x % 4);
-        ctx.drawImage(tileImg, px, py, tileSize + 0.5, tileSize + 0.5);
-
-        if (tile.settlementId && state.settlements[tile.settlementId]) {
-          const sett = state.settlements[tile.settlementId];
-          const settCanvas = CivilizationSpriteEngine.getSettlementCanvas(sett, 32);
-          const spriteSize = Math.max(8, tileSize * 0.85);
-          ctx.drawImage(settCanvas, px + (tileSize - spriteSize) / 2, py + (tileSize - spriteSize) / 2, spriteSize, spriteSize);
-        }
-      }
-    }
-  }
-
-  // 3 & 4. GLOBE & SNOW GLOBE
-  private static renderGlobe(
+  private static renderSquareWorld(
     ctx: CanvasRenderingContext2D,
     cw: number,
     ch: number,
     state: WorldState,
     camera: Camera3D,
     hoveredTile: { x: number; y: number } | null,
-    isSnowGlobe: boolean,
-    time: number
+    draw: SurfaceDrawContext
   ) {
-    const { grid, config } = state;
-    const { width, height } = config;
-    const centerCanvasX = cw / 2 + camera.x;
-    const centerCanvasY = ch / 2 + camera.y;
-    const radius = (Math.min(cw, ch) * 0.38) * camera.zoom;
+    const { width, height } = state.config;
+    const { tileSize, originX, originY } = this.frameFor(cw, ch, state, camera);
+    const mapW = width * tileSize;
+    const mapH = height * tileSize;
 
-    // Deep space
-    ctx.fillStyle = '#020617';
+    // Tabletop backdrop: warmer and closer than deep space, because a bounded square world
+    // is an object you look down at rather than a body you orbit.
+    const table = ctx.createRadialGradient(cw / 2, ch * 0.42, Math.min(cw, ch) * 0.1, cw / 2, ch / 2, Math.max(cw, ch) * 0.8);
+    table.addColorStop(0, '#171a22');
+    table.addColorStop(1, '#07090e');
+    ctx.fillStyle = table;
     ctx.fillRect(0, 0, cw, ch);
 
-    // Snow Globe Pedestal Base
-    if (isSnowGlobe) {
-      ctx.fillStyle = '#1e293b';
-      ctx.beginPath();
-      ctx.ellipse(centerCanvasX, centerCanvasY + radius + 15, radius * 0.8, 25, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#d97706'; // Gold rim
-      ctx.beginPath();
-      ctx.ellipse(centerCanvasX, centerCanvasY + radius + 5, radius * 0.75, 12, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const bevel = Math.max(10, tileSize * 0.75);
 
-    // Globe clip circle
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(centerCanvasX, centerCanvasY, radius, 0, Math.PI * 2);
-    ctx.clip();
-
-    // Ocean deep base fill
-    ctx.fillStyle = '#0f2744';
-    ctx.fillRect(centerCanvasX - radius, centerCanvasY - radius, radius * 2, radius * 2);
-
-    // Render spherical latitude/longitude grid samples
-    const samples = 90;
-    const cosY = Math.cos(camera.rotY);
-    const sinY = Math.sin(camera.rotY);
-    const cosX = Math.cos(camera.rotX);
-    const sinX = Math.sin(camera.rotX);
-
-    for (let sy = 0; sy < samples; sy++) {
-      const v = sy / samples;
-      const lat = (v - 0.5) * Math.PI;
-      const cosLat = Math.cos(lat);
-      const sinLat = Math.sin(lat);
-
-      for (let sx = 0; sx < samples; sx++) {
-        const u = sx / samples;
-        const lon = (u - 0.5) * (Math.PI * 2);
-
-        // 3D Sphere point
-        const px = cosLat * Math.sin(lon);
-        const py = sinLat;
-        const pz = cosLat * Math.cos(lon);
-
-        // Apply pitch (rotX) and yaw (rotY)
-        const rx1 = px * cosY - pz * sinY;
-        const rz1 = px * sinY + pz * cosY;
-        const ry2 = py * cosX - rz1 * sinX;
-        const rz2 = py * sinX + rz1 * cosX;
-
-        // Only draw visible hemisphere facing camera (rz2 > 0)
-        if (rz2 > 0) {
-          const screenX = centerCanvasX + rx1 * radius;
-          const screenY = centerCanvasY - ry2 * radius;
-
-          const gx = Math.floor(u * width) % width;
-          const gy = Math.floor((1 - v) * height);
-          const tile = grid[gy]?.[gx];
-
-          if (tile) {
-            // Spherical pixel dot with shading
-            const lumShade = Math.max(0.4, rz2);
-            ctx.fillStyle = this.getTileColorShaded(tile, lumShade);
-            const dotSize = Math.max(2.5, (radius / samples) * 2.2);
-            ctx.fillRect(screenX - dotSize / 2, screenY - dotSize / 2, dotSize, dotSize);
-          }
-        }
-      }
-    }
-
-    // Atmospheric rim glow & limb darkening
-    const rimGrad = ctx.createRadialGradient(centerCanvasX, centerCanvasY, radius * 0.7, centerCanvasX, centerCanvasY, radius);
-    rimGrad.addColorStop(0, 'rgba(56, 189, 248, 0)');
-    rimGrad.addColorStop(0.85, 'rgba(56, 189, 248, 0.25)');
-    rimGrad.addColorStop(1, 'rgba(14, 165, 233, 0.6)');
-    ctx.fillStyle = rimGrad;
-    ctx.fillRect(centerCanvasX - radius, centerCanvasY - radius, radius * 2, radius * 2);
-
-    // Snow Globe Floating Magic Particles
-    if (isSnowGlobe) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-      for (let i = 0; i < 35; i++) {
-        const flakeX = centerCanvasX + Math.sin(time + i * 2.5) * (radius * 0.75);
-        const flakeY = centerCanvasY + ((time * 20 + i * 18) % (radius * 1.6)) - radius * 0.8;
-        ctx.beginPath();
-        ctx.arc(flakeX, flakeY, 1.8, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
+    ctx.shadowBlur = 46;
+    ctx.shadowOffsetY = 22;
+    ctx.fillStyle = '#2c2114';
+    this.roundRect(ctx, originX - bevel, originY - bevel, mapW + bevel * 2, mapH + bevel * 2, bevel * 0.5);
+    ctx.fill();
     ctx.restore();
 
-    // Snow Globe Glass Dome Highlight & Reflection
-    if (isSnowGlobe) {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(centerCanvasX, centerCanvasY, radius, 0, Math.PI * 2);
-      ctx.stroke();
+    // Brass frame edge.
+    const rim = ctx.createLinearGradient(originX, originY - bevel, originX, originY + mapH + bevel);
+    rim.addColorStop(0, 'rgba(214, 176, 108, 0.85)');
+    rim.addColorStop(0.5, 'rgba(126, 98, 58, 0.7)');
+    rim.addColorStop(1, 'rgba(78, 58, 32, 0.9)');
+    ctx.strokeStyle = rim;
+    ctx.lineWidth = Math.max(2, bevel * 0.16);
+    this.roundRect(ctx, originX - bevel * 0.5, originY - bevel * 0.5, mapW + bevel, mapH + bevel, bevel * 0.3);
+    ctx.stroke();
 
-      // Curved glass reflection arc
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(centerCanvasX, centerCanvasY, radius * 0.92, -Math.PI * 0.75, -Math.PI * 0.35);
-      ctx.stroke();
+    if (draw.surface) {
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(draw.surface, originX, originY, mapW, mapH);
+      ctx.restore();
     }
+
+    // Board grid: this world genuinely has hard edges, so the grid is meaningful here.
+    ctx.strokeStyle = 'rgba(12, 16, 22, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const gridStep = Math.max(1, Math.round(8 / Math.max(0.35, camera.zoom)));
+    for (let x = 0; x <= width; x += gridStep) {
+      ctx.moveTo(originX + x * tileSize, originY);
+      ctx.lineTo(originX + x * tileSize, originY + mapH);
+    }
+    for (let y = 0; y <= height; y += gridStep) {
+      ctx.moveTo(originX, originY + y * tileSize);
+      ctx.lineTo(originX + mapW, originY + y * tileSize);
+    }
+    ctx.stroke();
+
+    // Edge-of-world falloff: a bounded slab literally ends.
+    const edge = ctx.createLinearGradient(originX, originY, originX, originY + mapH);
+    edge.addColorStop(0, 'rgba(6, 9, 14, 0.55)');
+    edge.addColorStop(0.12, 'rgba(6, 9, 14, 0)');
+    edge.addColorStop(0.88, 'rgba(6, 9, 14, 0)');
+    edge.addColorStop(1, 'rgba(6, 9, 14, 0.55)');
+    ctx.fillStyle = edge;
+    ctx.fillRect(originX, originY, mapW, mapH);
+
+    this.paintPlaces(ctx, state, { originX, originY, tileSize }, cw, ch);
+    this.paintTileMarkers(ctx, state, { originX, originY, tileSize }, hoveredTile, draw.selectedTile);
+    this.paintVignette(ctx, cw, ch);
   }
 
-  // 5. RELIEF / DIORAMA SLAB
-  private static renderReliefDiorama(
+  // ---------------------------------------------------------------- SPHERE FALLBACK
+
+  /**
+   * Software sphere used only when WebGL is unavailable. It warps the shared surface image
+   * into an orthographic globe so the product still shows a planet rather than an error.
+   */
+  private static renderSphereFallback(
     ctx: CanvasRenderingContext2D,
     cw: number,
     ch: number,
     state: WorldState,
     camera: Camera3D,
-    hoveredTile: { x: number; y: number } | null
-  ) {
-    const { grid, config } = state;
-    const { width, height } = config;
-    const centerCanvasX = cw / 2 + camera.x;
-    const centerCanvasY = ch / 2 + camera.y;
-
-    ctx.fillStyle = '#060a12';
-    ctx.fillRect(0, 0, cw, ch);
-
-    const isoW = 28 * camera.zoom;
-    const isoH = 14 * camera.zoom;
-
-    // Draw isometric tiles sorted back-to-front (y from 0 to height, x from 0 to width)
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const tile = grid[y][x];
-        const screenX = centerCanvasX + (x - y) * (isoW / 2);
-        const elevOffset = tile.isWater ? 0 : Math.round(tile.elevation * 45 * camera.zoom);
-        const screenY = centerCanvasY + (x + y) * (isoH / 2) - elevOffset - (height * isoH) / 4;
-
-        if (screenX + isoW < 0 || screenX - isoW > cw || screenY + isoH < 0 || screenY - isoH > ch) continue;
-
-        // Extruded vertical slab walls
-        if (elevOffset > 0) {
-          ctx.fillStyle = '#334155';
-          ctx.beginPath();
-          ctx.moveTo(screenX - isoW / 2, screenY + isoH / 2);
-          ctx.lineTo(screenX, screenY + isoH);
-          ctx.lineTo(screenX, screenY + isoH + elevOffset);
-          ctx.lineTo(screenX - isoW / 2, screenY + isoH / 2 + elevOffset);
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.fillStyle = '#1e293b';
-          ctx.beginPath();
-          ctx.moveTo(screenX, screenY + isoH);
-          ctx.lineTo(screenX + isoW / 2, screenY + isoH / 2);
-          ctx.lineTo(screenX + isoW / 2, screenY + isoH / 2 + elevOffset);
-          ctx.lineTo(screenX, screenY + isoH + elevOffset);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        // Diamond top face
-        ctx.fillStyle = this.getTileColor(tile);
-        ctx.beginPath();
-        ctx.moveTo(screenX, screenY);
-        ctx.lineTo(screenX + isoW / 2, screenY + isoH / 2);
-        ctx.lineTo(screenX, screenY + isoH);
-        ctx.lineTo(screenX - isoW / 2, screenY + isoH / 2);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Settlement marker on isometric top
-        if (tile.settlementId && state.settlements[tile.settlementId]) {
-          ctx.fillStyle = '#f59e0b';
-          ctx.beginPath();
-          ctx.arc(screenX, screenY + isoH / 2 - 4, 4 * camera.zoom, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    }
-  }
-
-  // 6. ORBITAL VIEW
-  private static renderOrbitalView(
-    ctx: CanvasRenderingContext2D,
-    cw: number,
-    ch: number,
-    state: WorldState,
-    camera: Camera3D,
-    hoveredTile: { x: number; y: number } | null,
+    draw: SurfaceDrawContext,
     time: number
   ) {
-    // Render deep starfield background
-    ctx.fillStyle = '#010409';
-    ctx.fillRect(0, 0, cw, ch);
+    this.paintVoid(ctx, cw, ch);
+    if (!draw.surface) return;
 
-    // Random sparkling stars
-    ctx.fillStyle = '#ffffff';
-    for (let i = 0; i < 80; i++) {
-      const sx = ((i * 137.5) % cw);
-      const sy = ((i * 293.3) % ch);
-      const size = (i % 3 === 0) ? 1.8 : 1.0;
-      ctx.fillRect(sx, sy, size, size);
-    }
+    const cx = cw / 2 + camera.x;
+    const cy = ch / 2 + camera.y;
+    const radius = Math.min(cw, ch) * 0.4 * camera.zoom;
+    const src = draw.surface;
+    const columns = Math.max(64, Math.floor(radius));
 
-    // Render planet sphere via globe engine
-    this.renderGlobe(ctx, cw, ch, state, camera, hoveredTile, false, time);
-
-    // Render Orbiting Moon
-    const centerCanvasX = cw / 2 + camera.x;
-    const centerCanvasY = ch / 2 + camera.y;
-    const radius = (Math.min(cw, ch) * 0.38) * camera.zoom;
-    const moonAngle = time * 0.5;
-    const moonDist = radius * 1.5;
-    const moonX = centerCanvasX + Math.cos(moonAngle) * moonDist;
-    const moonY = centerCanvasY + Math.sin(moonAngle) * (moonDist * 0.35);
-
-    ctx.fillStyle = '#cbd5e1';
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(moonX, moonY, Math.max(4, 7 * camera.zoom), 0, Math.PI * 2);
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+
+    const yawOffset = ((camera.rotY / (Math.PI * 2)) % 1 + 1) % 1;
+    for (let i = 0; i < columns; i++) {
+      const t = i / columns;
+      const lon = (t - 0.5) * Math.PI;
+      const screenX = cx + Math.sin(lon) * radius;
+      const nextX = cx + Math.sin(((i + 1) / columns - 0.5) * Math.PI) * radius;
+      const colW = Math.max(1, nextX - screenX);
+      const srcX = ((t + yawOffset) % 1) * src.width;
+      ctx.drawImage(src, srcX, 0, Math.max(1, src.width / columns), src.height, screenX, cy - radius, colW + 1, radius * 2);
+    }
+
+    // Spherical shading and limb darkening.
+    const shade = ctx.createRadialGradient(cx - radius * 0.4, cy - radius * 0.4, radius * 0.1, cx, cy, radius);
+    shade.addColorStop(0, 'rgba(255, 246, 226, 0.22)');
+    shade.addColorStop(0.55, 'rgba(0, 0, 0, 0)');
+    shade.addColorStop(1, 'rgba(0, 0, 0, 0.75)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+
+    const atmo = ctx.createRadialGradient(cx, cy, radius * 0.94, cx, cy, radius * 1.1);
+    atmo.addColorStop(0, 'rgba(111, 208, 255, 0.35)');
+    atmo.addColorStop(1, 'rgba(111, 208, 255, 0)');
+    ctx.fillStyle = atmo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 1.1, 0, Math.PI * 2);
     ctx.fill();
+    void time;
   }
 
-  private static getTileColor(tile: Tile): string {
-    if (tile.isWater) {
-      const depthLum = Math.max(10, Math.min(30, 25 - tile.waterDepth * 20));
-      return `hsl(215, 85%, ${depthLum}%)`;
-    }
-    const elevLum = Math.max(20, Math.min(85, 30 + tile.elevation * 50));
-    const greenSat = Math.max(10, Math.min(60, tile.moisture * 60));
-    return `hsl(95, ${greenSat}%, ${elevLum}%)`;
+  // ---------------------------------------------------------------- SHARED PARTS
+
+  private static paintVoid(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
+    const bg = ctx.createRadialGradient(cw / 2, ch * 0.45, 0, cw / 2, ch / 2, Math.max(cw, ch) * 0.75);
+    bg.addColorStop(0, '#0a1018');
+    bg.addColorStop(1, '#04060b');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, cw, ch);
   }
 
-  private static getTileColorShaded(tile: Tile, shade: number): string {
-    if (tile.isWater) {
-      const depthLum = Math.max(6, Math.min(35, (25 - tile.waterDepth * 20) * shade));
-      return `hsl(215, 85%, ${depthLum}%)`;
+  private static paintVignette(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
+    const v = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * 0.35, cw / 2, ch / 2, Math.max(cw, ch) * 0.75);
+    v.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    v.addColorStop(1, 'rgba(0, 0, 0, 0.42)');
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, cw, ch);
+  }
+
+  /** Latitude/longitude reference lines, spaced so they never crowd the terrain. */
+  private static paintGraticule(
+    ctx: CanvasRenderingContext2D,
+    originX: number,
+    originY: number,
+    mapW: number,
+    mapH: number,
+    tileSize: number,
+    state: WorldState
+  ) {
+    const { width, height } = state.config;
+    const step = Math.max(4, Math.round(12 / Math.max(0.4, tileSize / 14)));
+    ctx.save();
+    ctx.strokeStyle = 'rgba(180, 205, 235, 0.09)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = step; x < width; x += step) {
+      ctx.moveTo(originX + x * tileSize, originY);
+      ctx.lineTo(originX + x * tileSize, originY + mapH);
     }
-    const elevLum = Math.max(10, Math.min(90, (30 + tile.elevation * 50) * shade));
-    const greenSat = Math.max(10, Math.min(60, tile.moisture * 60));
-    return `hsl(95, ${greenSat}%, ${elevLum}%)`;
+    for (let y = step; y < height; y += step) {
+      ctx.moveTo(originX, originY + y * tileSize);
+      ctx.lineTo(originX + mapW, originY + y * tileSize);
+    }
+    ctx.stroke();
+
+    // The equator is the one line worth emphasising on a spherical world.
+    if (state.config.topology !== 'PLANAR_BOUNDED') {
+      ctx.strokeStyle = 'rgba(226, 196, 132, 0.24)';
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.moveTo(originX, originY + mapH / 2);
+      ctx.lineTo(originX + mapW, originY + mapH / 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Settlement, ruin and capital symbols. One vocabulary: a filled core sized by real
+   * population, a ring for polity capitals, a broken glyph for ruins. Labels appear only
+   * when there is room for them.
+   */
+  private static paintPlaces(
+    ctx: CanvasRenderingContext2D,
+    state: WorldState,
+    frame: Frame,
+    cw: number,
+    ch: number
+  ) {
+    const { originX, originY, tileSize } = frame;
+    const showLabels = tileSize > 15;
+
+    ctx.save();
+    ctx.lineJoin = 'round';
+
+    // Ruins first, so living settlements always draw over their own past.
+    for (let y = 0; y < state.config.height; y++) {
+      for (let x = 0; x < state.config.width; x++) {
+        const tile = state.grid[y][x];
+        if (tile.ruins.length === 0) continue;
+        const px = originX + (x + 0.5) * tileSize;
+        const py = originY + (y + 0.5) * tileSize;
+        if (px < -40 || px > cw + 40 || py < -40 || py > ch + 40) continue;
+        const s = Math.max(3.5, tileSize * 0.26);
+        ctx.strokeStyle = 'rgba(183, 155, 255, 0.9)';
+        ctx.lineWidth = Math.max(1.2, s * 0.22);
+        ctx.beginPath();
+        ctx.moveTo(px - s, py + s * 0.7);
+        ctx.lineTo(px - s * 0.35, py - s * 0.5);
+        ctx.moveTo(px + s * 0.1, py + s * 0.7);
+        ctx.lineTo(px + s * 0.1, py - s * 0.2);
+        ctx.moveTo(px + s * 0.75, py + s * 0.7);
+        ctx.lineTo(px + s * 0.75, py - s * 0.6);
+        ctx.stroke();
+      }
+    }
+
+    const settlements = Object.values(state.settlements);
+    for (const s of settlements) {
+      const px = originX + (s.tileX + 0.5) * tileSize;
+      const py = originY + (s.tileY + 0.5) * tileSize;
+      if (px < -60 || px > cw + 60 || py < -60 || py > ch + 60) continue;
+
+      const rank = SETTLEMENT_TIER_RANK[s.tier] ?? 2;
+      const r = Math.max(2.6, tileSize * (0.14 + rank * 0.045));
+      const polity = state.polities[s.polityId];
+      const isCapital = polity?.capitalSettlementId === s.id;
+
+      if (s.isAbandoned) {
+        ctx.strokeStyle = 'rgba(150, 148, 160, 0.75)';
+        ctx.lineWidth = Math.max(1, r * 0.3);
+        ctx.beginPath();
+        ctx.arc(px, py, r * 0.8, 0, Math.PI * 2);
+        ctx.stroke();
+        continue;
+      }
+
+      ctx.beginPath();
+      ctx.arc(px, py, r * 1.9, 0, Math.PI * 2);
+      const glow = ctx.createRadialGradient(px, py, 0, px, py, r * 1.9);
+      glow.addColorStop(0, 'rgba(255, 206, 138, 0.5)');
+      glow.addColorStop(1, 'rgba(255, 206, 138, 0)');
+      ctx.fillStyle = glow;
+      ctx.fill();
+
+      ctx.fillStyle = '#f7d9a4';
+      ctx.strokeStyle = 'rgba(28, 20, 10, 0.85)';
+      ctx.lineWidth = Math.max(0.8, r * 0.25);
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      if (isCapital) {
+        ctx.strokeStyle = 'rgba(255, 226, 168, 0.95)';
+        ctx.lineWidth = Math.max(1, r * 0.24);
+        ctx.beginPath();
+        ctx.arc(px, py, r * 1.75, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      if (showLabels && rank >= 2) {
+        const label = s.name;
+        ctx.font = `${Math.max(10, Math.min(15, tileSize * 0.52))}px ui-serif, Georgia, serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(4, 7, 12, 0.9)';
+        ctx.strokeText(label, px, py - r * 1.9);
+        ctx.fillStyle = 'rgba(248, 236, 214, 0.95)';
+        ctx.fillText(label, px, py - r * 1.9);
+      }
+    }
+    ctx.restore();
+  }
+
+  private static paintTileMarkers(
+    ctx: CanvasRenderingContext2D,
+    state: WorldState,
+    frame: Frame,
+    hoveredTile: { x: number; y: number } | null,
+    selectedTile: { x: number; y: number } | null
+  ) {
+    const { originX, originY, tileSize } = frame;
+    void state;
+
+    if (hoveredTile) {
+      ctx.strokeStyle = 'rgba(180, 224, 255, 0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(originX + hoveredTile.x * tileSize, originY + hoveredTile.y * tileSize, tileSize, tileSize);
+    }
+
+    if (selectedTile) {
+      const px = originX + selectedTile.x * tileSize;
+      const py = originY + selectedTile.y * tileSize;
+      const pad = Math.max(3, tileSize * 0.3);
+      ctx.strokeStyle = '#6fd0ff';
+      ctx.lineWidth = 2;
+      // Corner brackets read as "this is under inspection" without hiding the terrain.
+      ctx.beginPath();
+      ctx.moveTo(px - 2, py + pad);
+      ctx.lineTo(px - 2, py - 2);
+      ctx.lineTo(px + pad, py - 2);
+      ctx.moveTo(px + tileSize - pad, py - 2);
+      ctx.lineTo(px + tileSize + 2, py - 2);
+      ctx.lineTo(px + tileSize + 2, py + pad);
+      ctx.moveTo(px + tileSize + 2, py + tileSize - pad);
+      ctx.lineTo(px + tileSize + 2, py + tileSize + 2);
+      ctx.lineTo(px + tileSize - pad, py + tileSize + 2);
+      ctx.moveTo(px + pad, py + tileSize + 2);
+      ctx.lineTo(px - 2, py + tileSize + 2);
+      ctx.lineTo(px - 2, py + tileSize - pad);
+      ctx.stroke();
+    }
+  }
+
+  private static roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + w, y, x + w, y + h, radius);
+    ctx.arcTo(x + w, y + h, x, y + h, radius);
+    ctx.arcTo(x, y + h, x, y, radius);
+    ctx.arcTo(x, y, x + w, y, radius);
+    ctx.closePath();
   }
 }

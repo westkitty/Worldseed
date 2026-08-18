@@ -52,21 +52,21 @@ export const PinnedEntityFollower: React.FC<PinnedEntityFollowerProps> = ({
   }
 
   return (
-    <div className="absolute top-16 left-36 bg-slate-900/90 border border-amber-500/60 backdrop-blur-md rounded-lg p-2.5 shadow-2xl z-20 text-xs text-slate-200 flex items-center gap-3 select-none animate-fade-in">
-      <div className="p-1.5 bg-amber-500/20 rounded border border-amber-500/40 text-amber-400">
-        <Pin size={14} />
+    <div className="ws-panel absolute top-[196px] left-3 z-20 p-2 pl-2.5 max-w-[248px] hidden sm:flex items-center gap-2.5">
+      <div className="p-1.5 rounded-md shrink-0" style={{ background: 'rgba(242, 180, 92, 0.16)', color: 'var(--ws-culture)' }}>
+        <Pin size={13} />
       </div>
 
-      <div>
-        <div className="font-bold text-white font-serif">{title}</div>
-        <div className="text-[10px] font-mono text-slate-400">{subtitle}</div>
+      <div className="min-w-0">
+        <div className="text-[12px] truncate" style={{ color: 'var(--ws-ink)' }}>{title}</div>
+        <div className="ws-numeric text-[10px] truncate" style={{ color: 'var(--ws-ink-faint)' }}>{subtitle}</div>
       </div>
 
-      <div className="flex items-center gap-1 ml-2 border-l border-slate-700 pl-2">
+      <div className="flex items-center gap-0.5 ml-auto pl-1.5 border-l shrink-0" style={{ borderColor: 'var(--ws-hairline)' }}>
         {coords && (
           <button
             onClick={() => onJumpToCoordinates(coords!.x, coords!.y)}
-            className="p-1.5 hover:bg-slate-800 rounded text-sky-400"
+            className="p-1.5 rounded hover:bg-white/10" style={{ color: 'var(--ws-accent)' }}
             title="Center Camera on Entity"
           >
             <Navigation size={14} />
@@ -74,14 +74,14 @@ export const PinnedEntityFollower: React.FC<PinnedEntityFollowerProps> = ({
         )}
         <button
           onClick={() => onOpenWhy(causalNodeId)}
-          className="p-1.5 hover:bg-slate-800 rounded text-amber-400"
+          className="p-1.5 rounded hover:bg-white/10" style={{ color: 'var(--ws-deep-time)' }}
           title="Open WHY? Causal Trace"
         >
           <Search size={14} />
         </button>
         <button
           onClick={onUnpin}
-          className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-white"
+          className="p-1.5 rounded hover:bg-white/10" style={{ color: 'var(--ws-ink-faint)' }}
           title="Unpin Subject"
         >
           <X size={14} />

@@ -1,6 +1,7 @@
 // Disease ecology, zoonotic spillover, trade-route epidemic propagation, and mutation
 
 import { PRNG } from '../math/prng';
+import { topologicalDistance } from '../planet/topology';
 import {
   HistoricalEvent,
   Pathogen,
@@ -123,10 +124,16 @@ export function simulateEpidemicStep(
         if (prng.next() < 0.25) {
           for (const otherS of Object.values(settlements)) {
             if (otherS.id !== s.id && !otherS.isAbandoned) {
-              let dx = Math.abs(s.tileX - otherS.tileX);
-              if (dx > width / 2) dx = width - dx;
-              const dy = Math.abs(s.tileY - otherS.tileY);
-              const dist = Math.sqrt(dx * dx + dy * dy);
+              // Travel distance follows the world's topology: contagion can round a
+              // spherical or toroidal world the short way, but on a bounded slab or a sky
+              // archipelago it must actually cross the intervening ground.
+              const dist = topologicalDistance(
+                { x: s.tileX, y: s.tileY },
+                { x: otherS.tileX, y: otherS.tileY },
+                width,
+                height,
+                config.topology
+              );
 
               if (dist < 6) {
                 const targetTile = grid[otherS.tileY][otherS.tileX];

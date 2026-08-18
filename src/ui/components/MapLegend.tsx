@@ -11,13 +11,16 @@ interface MapLegendProps {
 
 export const MapLegend: React.FC<MapLegendProps> = ({ activeLayer, state }) => {
   return (
-    <div className="absolute bottom-16 right-4 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md rounded-lg p-2.5 shadow-2xl z-20 text-[11px] text-slate-200 select-none max-w-[200px]">
-      <div className="font-mono font-bold text-sky-400 uppercase text-[10px] mb-1.5 border-b border-slate-700 pb-0.5">
-        Legend: {activeLayer.replace('_', ' ')}
+    <div className="ws-panel absolute bottom-24 left-3 p-2.5 z-20 text-[11px] select-none max-w-[196px] hidden md:block" style={{ color: 'var(--ws-ink-muted)' }}>
+      <div
+        className="text-[10px] uppercase tracking-[0.16em] mb-2 pb-1.5 border-b"
+        style={{ color: 'var(--ws-ink-faint)', borderColor: 'var(--ws-hairline)' }}
+      >
+        {activeLayer.replace(/_/g, ' ').toLowerCase()}
       </div>
 
       {activeLayer === 'PHYSICAL' && (
-        <div className="space-y-1 font-mono text-[10px]">
+        <div className="space-y-1 ws-numeric text-[10px]">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded bg-blue-900 border border-blue-700" />
             <span>Deep Oceans</span>
@@ -40,7 +43,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({ activeLayer, state }) => {
       {activeLayer === 'TEMPERATURE' && (
         <div className="space-y-1">
           <div className="h-2 rounded bg-gradient-to-r from-blue-600 via-emerald-500 via-amber-400 to-red-600" />
-          <div className="flex justify-between font-mono text-[10px] text-slate-400">
+          <div className="flex justify-between ws-numeric text-[10px]">
             <span>-25°C</span>
             <span>+10°C</span>
             <span>+35°C</span>
@@ -51,7 +54,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({ activeLayer, state }) => {
       {activeLayer === 'BIODIVERSITY' && (
         <div className="space-y-1">
           <div className="h-2 rounded bg-gradient-to-r from-red-800 via-yellow-600 to-emerald-500" />
-          <div className="flex justify-between font-mono text-[10px] text-slate-400">
+          <div className="flex justify-between ws-numeric text-[10px]">
             <span>Sparse</span>
             <span>Climax Hotspot</span>
           </div>
@@ -67,7 +70,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({ activeLayer, state }) => {
             </div>
           ))}
           {Object.values(state.polities).length === 0 && (
-            <span className="text-slate-400 italic">No polities established</span>
+            <span className="italic">No polities established</span>
           )}
         </div>
       )}

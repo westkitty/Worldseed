@@ -16,6 +16,7 @@ build
 coverage
 .nyc_output
 .resurrection/
+artifacts/
 
 # Editor directories and files
 .vscode/*

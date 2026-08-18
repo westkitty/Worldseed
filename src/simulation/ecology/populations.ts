@@ -2,6 +2,7 @@
 
 import { PRNG } from '../math/prng';
 import { Species, Tile, WorldConfig } from '../../types/simulation';
+import { stepCoordinate } from '../planet/topology';
 
 export interface TilePop {
   speciesId: string;
@@ -21,28 +22,9 @@ function resolveMigrationTarget(
   config: WorldConfig
 ): { x: number; y: number } | null {
   const { width, height } = config;
-  const topology = config.topology || 'SPHERICAL';
-
-  if (topology === 'TOROIDAL_WRAP') {
-    return {
-      x: (x + dx + width) % width,
-      y: (y + dy + height) % height
-    };
-  }
-
-  if (topology === 'SPHERICAL' || topology === 'CYLINDRICAL_HABITAT' || topology === 'RINGWORLD_SEGMENT') {
-    return {
-      x: (x + dx + width) % width,
-      y: Math.max(0, Math.min(height - 1, y + dy))
-    };
-  }
-
-  // Bounded, floating-island, and layered-cavern worlds do not silently wrap
-  // populations across opposite edges of the simulation.
-  const nx = x + dx;
-  const ny = y + dy;
-  if (nx < 0 || nx >= width || ny < 0 || ny >= height) return null;
-  return { x: nx, y: ny };
+  // Adjacency is defined once, in planet/topology.ts, so migration, hydrology, atmospheric
+  // transport and contagion all agree about what is next to what.
+  return stepCoordinate(x, y, dx, dy, width, height, config.topology);
 }
 
 function updateGenreEnvironment(tile: Tile, config: WorldConfig): number {

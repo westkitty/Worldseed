@@ -70,7 +70,10 @@ export function snapshotEngineRuntime(engine: SimulationEngine | null, state: Wo
 
 export function restoreEngineRuntime(saved: WorldState): SimulationEngine {
   const persistable = saved as PersistableWorldState;
-  const engine = new SimulationEngine(saved.config);
+  // The saved state already contains whatever starting-era history was generated, so the
+  // restore path must not regenerate it (that would both waste time and desynchronise the
+  // PRNG from the snapshot being restored).
+  const engine = new SimulationEngine(saved.config, { bootstrapStartingEra: false });
   const internals = getInternals(engine);
   const runtime = persistable.__worldseedRuntime;
 

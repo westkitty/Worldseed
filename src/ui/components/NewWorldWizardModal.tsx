@@ -6,6 +6,7 @@ import {
   Layers, RefreshCw, BookOpen, ArrowRight, Dna
 } from 'lucide-react';
 import { WorldConfig, WorldPreset, WorldTopology, GenreRuleset, StartingEra } from '../../types/simulation';
+import { ERA_PROFILES } from '../../simulation/scenarios/startingEra';
 import { WORLDSEED_PRESETS, getPresetConfig } from '../../simulation/scenarios/presets';
 
 interface NewWorldWizardModalProps {
@@ -309,6 +310,7 @@ export const NewWorldWizardModal: React.FC<NewWorldWizardModalProps> = ({
                       <option value="FLOATING_ISLANDS">Floating Sky Archipelago</option>
                       <option value="RINGWORLD_SEGMENT">Ringworld Megastructure</option>
                       <option value="CYLINDRICAL_HABITAT">O'Neill Cylinder Interior</option>
+                      <option value="LAYERED_CAVERNS">Layered Cavern Depths</option>
                     </select>
                   </div>
 
@@ -394,6 +396,44 @@ export const NewWorldWizardModal: React.FC<NewWorldWizardModalProps> = ({
                       className="w-full h-1.5 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-purple-500"
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* Starting Era — the world is genuinely simulated up to this point before
+                  you see it, so the choice changes generated state rather than a label. */}
+              <div className="p-4 bg-slate-800/40 rounded-xl border border-slate-700/60">
+                <h4 className="font-bold text-sky-400 text-xs uppercase font-mono tracking-wider mb-1">Starting Era</h4>
+                <p className="text-[11px] text-slate-400 mb-3">
+                  WORLDSEED simulates the centuries leading up to your chosen era before the first frame.
+                  Later starts take longer to generate because more history actually happens.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {(Object.keys(ERA_PROFILES) as StartingEra[]).map(era => {
+                    const profile = ERA_PROFILES[era];
+                    const active = startingEra === era;
+                    return (
+                      <button
+                        key={era}
+                        onClick={() => setStartingEra(era)}
+                        aria-pressed={active}
+                        className={`text-left px-3 py-2 rounded-lg border transition-colors ${
+                          active
+                            ? 'bg-sky-500/15 border-sky-500/60'
+                            : 'bg-slate-900/60 border-slate-700/60 hover:border-slate-600'
+                        }`}
+                      >
+                        <span className="flex items-baseline justify-between gap-2">
+                          <span className="text-xs font-semibold text-white capitalize">
+                            {era.replace(/_/g, ' ').toLowerCase()}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                            {profile.simulatedYears === 0 ? 'year 0' : `~${profile.simulatedYears + profile.settleYears}y`}
+                          </span>
+                        </span>
+                        <span className="block text-[11px] text-slate-400 mt-0.5 leading-snug">{profile.summary}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

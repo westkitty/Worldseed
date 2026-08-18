@@ -1,85 +1,103 @@
-// Interactive Real-Time Minimap with Draggable Viewport Frame
+// Locator map — a small, quiet reference showing where the camera is looking.
 
 import React, { useEffect, useRef } from 'react';
-import { WorldState } from '../../types/simulation';
+import { WorldState, WorldViewMode } from '../../types/simulation';
+import { Camera3D, WorldProjectionEngine } from '../../visuals/views/projections';
 
 interface MinimapProps {
   state: WorldState;
-  camera: { x: number; y: number; zoom: number };
+  camera: Camera3D;
+  viewMode: WorldViewMode;
+  surface: HTMLCanvasElement | null;
+  viewportSize: { width: number; height: number };
   onCenterCoordinates: (x: number, y: number) => void;
 }
 
-export const Minimap: React.FC<MinimapProps> = ({
-  state,
-  camera,
-  onCenterCoordinates
-}) => {
+const MAP_W = 132;
+
+export const Minimap: React.FC<MinimapProps> = ({ state, camera, viewMode, surface, viewportSize, onCenterCoordinates }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const { grid, config } = state;
+  const { config } = state;
   const { width, height } = config;
+  const mapH = Math.round((MAP_W * height) / width);
+  const isFlat = viewMode === 'FLAT_ATLAS' || viewMode === 'SQUARE_TILE';
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
 
-    const cw = canvas.width;
-    const ch = canvas.height;
-    const cellW = cw / width;
-    const cellH = ch / height;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (canvas.width !== MAP_W * dpr || canvas.height !== mapH * dpr) {
+      canvas.width = MAP_W * dpr;
+      canvas.height = mapH * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, MAP_W, mapH);
 
-    ctx.clearRect(0, 0, cw, ch);
-
-    // Draw terrain preview
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const tile = grid[y][x];
-        if (tile.isWater) {
-          ctx.fillStyle = '#1e3a8a';
-        } else if (tile.settlementId) {
-          ctx.fillStyle = '#f59e0b';
-        } else if (tile.ruins.length > 0) {
-          ctx.fillStyle = '#a855f7';
-        } else {
-          const lum = Math.max(15, Math.min(65, 20 + tile.elevation * 45));
-          ctx.fillStyle = `hsl(100, 45%, ${lum}%)`;
-        }
-        ctx.fillRect(x * cellW, y * cellH, cellW + 0.5, cellH + 0.5);
-      }
+    // The locator shows the same composited planet as the main view, downscaled — never a
+    // second, differently coloured rendering of the same world.
+    if (surface) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(surface, 0, 0, MAP_W, mapH);
+    } else {
+      ctx.fillStyle = '#0a1018';
+      ctx.fillRect(0, 0, MAP_W, mapH);
     }
 
-    // Draw border frame
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(0, 0, cw, ch);
-  }, [state]);
+    if (isFlat && viewportSize.width > 0) {
+      const frame = WorldProjectionEngine.frame(viewportSize.width, viewportSize.height, width, height, camera);
+      const visX = (-frame.originX / frame.tileSize / width) * MAP_W;
+      const visY = (-frame.originY / frame.tileSize / height) * mapH;
+      const visW = (viewportSize.width / frame.tileSize / width) * MAP_W;
+      const visH = (viewportSize.height / frame.tileSize / height) * mapH;
 
-  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(111, 208, 255, 0.9)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(
+        Math.max(0.5, visX),
+        Math.max(0.5, visY),
+        Math.min(MAP_W - 1, visW),
+        Math.min(mapH - 1, visH)
+      );
+      ctx.restore();
+    }
+  }, [state, surface, camera, isFlat, viewportSize.width, viewportSize.height, width, height, mapH]);
+
+  const jump = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
-
-    const tileX = Math.floor((clickX / canvas.width) * width);
-    const tileY = Math.floor((clickY / canvas.height) * height);
+    const tileX = Math.max(0, Math.min(width - 1, Math.floor(((clientX - rect.left) / rect.width) * width)));
+    const tileY = Math.max(0, Math.min(height - 1, Math.floor(((clientY - rect.top) / rect.height) * height)));
     onCenterCoordinates(tileX, tileY);
   };
 
   return (
-    <div className="absolute top-16 left-4 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md rounded-lg p-1.5 shadow-2xl z-20 select-none">
-      <div className="text-[10px] font-mono text-slate-400 font-semibold px-1 mb-1 flex items-center justify-between">
-        <span>MINIMAP</span>
-        <span className="text-sky-400">{camera.zoom.toFixed(1)}×</span>
-      </div>
+    <div className="ws-panel absolute top-4 left-4 p-1.5 z-20 select-none hidden sm:block">
       <canvas
         ref={canvasRef}
-        width={120}
-        height={90}
-        onClick={handleClick}
-        className="rounded cursor-crosshair"
+        style={{ width: MAP_W, height: mapH }}
+        onPointerDown={e => {
+          e.stopPropagation();
+          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+          jump(e.clientX, e.clientY);
+        }}
+        onPointerMove={e => {
+          if (e.buttons === 1) {
+            e.stopPropagation();
+            jump(e.clientX, e.clientY);
+          }
+        }}
+        onPointerUp={e => e.stopPropagation()}
+        className="rounded-[7px] cursor-crosshair block"
+        aria-hidden="true"
       />
+      <div className="flex items-center justify-between px-0.5 pt-1 ws-numeric text-[10px]" style={{ color: 'var(--ws-ink-faint)' }}>
+        <span>{width}×{height}</span>
+        <span>{isFlat ? `${camera.zoom.toFixed(1)}×` : viewMode.replace(/_/g, ' ').toLowerCase()}</span>
+      </div>
     </div>
   );
 };

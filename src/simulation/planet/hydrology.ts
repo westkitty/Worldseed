@@ -2,6 +2,7 @@
 
 import { PRNG } from '../math/prng';
 import { WorldConfig } from '../../types/simulation';
+import { stepCoordinate } from './topology';
 
 export interface RiverTile {
   flow: number; // 0 to 1
@@ -54,23 +55,27 @@ export function simulateHydrology(
     const { x, y, elev } = cell;
     const vol = waterVolume[y][x];
 
-    // Find steepest downhill neighbor (with wrapping on X)
+    // Find the steepest downhill neighbour under this world's actual adjacency rules.
     let minElev = elev;
     let targetX = -1;
     let targetY = -1;
+    let drainsOffWorld = false;
 
     for (let dy = -1; dy <= 1; dy++) {
-      const ny = y + dy;
-      if (ny < 0 || ny >= height) continue;
       for (let dx = -1; dx <= 1; dx++) {
         if (dx === 0 && dy === 0) continue;
-        const nx = (x + dx + width) % width;
-        const nElev = elevation[ny][nx];
-
+        const next = stepCoordinate(x, y, dx, dy, width, height, config.topology);
+        if (!next) {
+          // On a bounded slab, a sky archipelago or a cavern system, downhill at the rim
+          // means over the rim: the water is gone rather than dammed by the array bounds.
+          drainsOffWorld = true;
+          continue;
+        }
+        const nElev = elevation[next.y][next.x];
         if (nElev < minElev) {
           minElev = nElev;
-          targetX = nx;
-          targetY = ny;
+          targetX = next.x;
+          targetY = next.y;
         }
       }
     }
@@ -84,7 +89,7 @@ export function simulateHydrology(
       if (dx < -width / 2) dx += width;
       const dy = targetY - y;
       riverDir[y][x] = Math.atan2(dy, dx);
-    } else {
+    } else if (!drainsOffWorld) {
       // Endorheic local depression -> becomes an inland Lake if high water accumulation
       if (vol > 2.5) {
         isLake[y][x] = true;

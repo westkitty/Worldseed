@@ -5,7 +5,12 @@ const baseURL = process.env.WORLDSEED_URL || 'http://127.0.0.1:5173';
 const outDir = process.env.WORLDSEED_E2E_OUT || 'artifacts/browser-playtest';
 await fs.mkdir(outDir, { recursive: true });
 
-const browser = await chromium.launch({ headless: true });
+// CI installs the default headless shell. WORLDSEED_E2E_CHANNEL lets a local run use an
+// already-present full Chromium build instead of downloading a second one.
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.WORLDSEED_E2E_CHANNEL ? { channel: process.env.WORLDSEED_E2E_CHANNEL } : {})
+});
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const runtimeErrors = [];
 
@@ -16,18 +21,27 @@ page.on('console', msg => {
 
 const fail = message => { throw new Error(message); };
 
+// The visible clock abbreviates deep time ("1.4M yr"), so the exact value is read from the
+// clock's accessible name instead of its rendered text.
 const readYear = async () => {
-  const yearLabel = page.getByText('YEAR', { exact: true }).first();
-  const parentText = await yearLabel.locator('..').innerText();
-  const match = parentText.match(/YEAR\s+([\d,]+)/);
-  if (!match) fail(`Could not parse current year from: ${parentText}`);
-  return Number(match[1].replaceAll(',', ''));
+  const label = await page.locator('[aria-label^="Current year"]').first().getAttribute('aria-label');
+  const match = label?.match(/Current year (\d+)/);
+  if (!match) fail(`Could not parse current year from: ${label}`);
+  return Number(match[1]);
 };
 
 try {
   await page.goto(baseURL, { waitUntil: 'networkidle', timeout: 45_000 });
   await page.getByText('WORLDSEED', { exact: true }).first().waitFor({ state: 'visible', timeout: 15_000 });
-  await page.screenshot({ path: `${outDir}/01-flat-atlas.png`, fullPage: true });
+
+  // The world opens on the Globe hero view with first-use guidance. Capture both, then
+  // dismiss the guidance so it cannot intercept later interaction.
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: `${outDir}/00-first-light.png`, fullPage: true });
+  const introDismiss = page.getByRole('button', { name: 'Dismiss introduction' });
+  if (await introDismiss.count()) await introDismiss.click();
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: `${outDir}/01-default-globe.png`, fullPage: true });
 
   const viewSelectIndex = await page.locator('select').evaluateAll(selects =>
     selects.findIndex(select => Array.from(select.options).some(option => option.value === 'GLOBE'))
@@ -43,6 +57,13 @@ try {
 
   const rootBox = await page.locator('#root').boundingBox();
   if (!rootBox) fail('Application root has no visible bounding box.');
+
+  await viewSelect.selectOption('FLAT_ATLAS');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${outDir}/02-flat-atlas.png`, fullPage: true });
+  await viewSelect.selectOption('SQUARE_TILE');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${outDir}/03-square-world.png`, fullPage: true });
 
   const heroViews = ['GLOBE', 'SNOW_GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW'];
   for (const mode of heroViews) {
@@ -63,8 +84,12 @@ try {
 
     await page.mouse.click(cx, cy);
     await page.waitForTimeout(250);
-    const inspectorText = await page.locator('body').innerText();
-    if (!/(TILE|SPECIES|SETTLEMENT|RUIN)/.test(inspectorText)) fail(`${mode} center click did not expose any selectable world entity.`);
+    // Assert the inspector itself opened, rather than matching prose that any UI copy change
+    // could break. The panel only renders when a world entity actually resolved.
+    if (!(await page.locator('aside[aria-label="Inspector"]').count())) {
+      fail(`${mode} center click did not expose any selectable world entity.`);
+    }
+    await page.keyboard.press('Escape');
 
     await layerSelect.selectOption('TEMPERATURE');
     await page.waitForTimeout(150);
@@ -105,28 +130,73 @@ try {
   await page.waitForTimeout(650);
   const afterYear = await readYear();
   if (afterYear - beforeYear < 3) fail(`Continuous simulation stalled: expected multiple years at 20×, advanced only ${afterYear - beforeYear}.`);
+  // Active speed is asserted through the control's own pressed state rather than a styling
+  // class, so the check survives visual changes and still proves the control is authoritative.
   const speedButton = page.getByRole('button', { name: '20×' });
-  if (!(await speedButton.getAttribute('class'))?.includes('bg-sky-600')) fail('20× speed selection did not remain active after simulation ticks.');
+  if ((await speedButton.getAttribute('aria-pressed')) !== 'true') fail('20× speed selection did not remain active after simulation ticks.');
   await page.getByRole('button', { name: 'Pause Time' }).click();
 
   // Real IndexedDB/UI persistence round trip: save, mutate time, load the save, and prove
   // the authoritative engine state returns to the saved year.
   const savedYear = await readYear();
-  await page.getByTitle('Local Saves & World Export/Import').click();
+  const openSaves = async () => {
+    await page.getByRole('button', { name: 'Instruments' }).click();
+    await page.getByRole('menuitem', { name: /Saves/ }).click();
+  };
+
+  await openSaves();
   await page.getByPlaceholder('Enter save slot name...').fill('Browser E2E Checkpoint');
   await page.getByRole('button', { name: 'Save to Browser DB' }).click();
   await page.getByText('Browser E2E Checkpoint', { exact: true }).waitFor({ state: 'visible', timeout: 5_000 });
   await page.getByLabel('Close Saves').click();
 
-  await page.getByText('+10y', { exact: true }).click();
+  await page.getByText('+100y', { exact: true }).click();
   const mutatedYear = await readYear();
   if (mutatedYear <= savedYear) fail('World did not advance after creating the persistence checkpoint.');
 
-  await page.getByTitle('Local Saves & World Export/Import').click();
+  await openSaves();
   await page.getByRole('button', { name: 'Load' }).first().click();
   await page.waitForTimeout(200);
   const restoredYear = await readYear();
   if (restoredYear !== savedYear) fail(`Save/load round trip restored year ${restoredYear}, expected ${savedYear}.`);
+
+  // Selection must reach the inspector and the world at the same time.
+  await viewSelect.selectOption('GLOBE');
+  await page.waitForTimeout(400);
+  const globeCanvas = await page.locator('canvas[data-worldseed-renderer="three"]').boundingBox();
+  if (globeCanvas) {
+    await page.mouse.click(globeCanvas.x + globeCanvas.width / 2, globeCanvas.y + globeCanvas.height / 2);
+    await page.waitForTimeout(250);
+    if (!(await page.locator('aside[aria-label="Inspector"]').count())) fail('Selecting on the globe did not open the inspector.');
+    await page.screenshot({ path: `${outDir}/10-globe-selection.png`, fullPage: true });
+    await page.getByRole('button', { name: 'Why?' }).first().click();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${outDir}/11-why-trace.png`, fullPage: true });
+    await page.keyboard.press('Escape');
+  }
+
+  // Secondary tools must stay reachable but subordinate.
+  await page.getByRole('button', { name: 'Instruments' }).click();
+  await page.waitForTimeout(150);
+  await page.screenshot({ path: `${outDir}/12-instruments.png`, fullPage: true });
+  await page.keyboard.press('Escape');
+
+  // WebGL contexts must not accumulate across repeated view switching.
+  const canvasCount = await page.locator('canvas').count();
+  if (canvasCount > 3) fail(`Repeated view switching left ${canvasCount} canvases alive.`);
+
+  // Narrow viewport: no critical control may vanish.
+  await page.setViewportSize({ width: 430, height: 860 });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${outDir}/13-narrow.png`, fullPage: true });
+  for (const name of ['Resume Time', 'Pause Time']) {
+    if (await page.getByRole('button', { name }).count()) break;
+  }
+  if (!(await page.getByRole('button', { name: /Resume Time|Pause Time/ }).count())) fail('Time control disappeared at mobile width.');
+  if (!(await page.getByRole('button', { name: 'Instruments' }).count())) fail('Instruments menu disappeared at mobile width.');
+  if (!(await page.getByLabel('World view').count())) fail('World view selector disappeared at mobile width.');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(300);
 
   if (runtimeErrors.length) fail(`Browser runtime emitted errors:\n${runtimeErrors.join('\n')}`);
 
@@ -138,6 +208,8 @@ try {
     keyboardCameraControls: 'PASS',
     continuousSimulationYearsAdvanced: afterYear - beforeYear,
     persistenceRoundTrip: { savedYear, mutatedYear, restoredYear, verdict: 'PASS' },
+    liveCanvasesAfterViewTorture: canvasCount,
+    narrowViewportControls: 'PASS',
     runtimeErrors,
     verdict: 'PASS'
   };

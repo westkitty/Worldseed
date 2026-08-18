@@ -20,6 +20,7 @@ import { createRuinFromSettlement, updateRuinDecayAndExcavation } from './civili
 import { checkZoonoticSpillover, simulateEpidemicStep } from './disease/epidemiology';
 import { createMythFromHistoricalEvent } from './myth/culturalMemory';
 import { CausalityEngine } from './history/causality';
+import { applyStartingEra } from './scenarios/startingEra';
 import { evaluateEras } from './history/chronicle';
 import { scanForEmergentDiscoveries } from './history/discoveries';
 import {
@@ -45,10 +46,43 @@ export class SimulationEngine {
   private pathogenCounter = { current: 0 };
   private mythCounter = { current: 0 };
 
-  constructor(config: WorldConfig) {
+  /**
+   * @param config world parameters
+   * @param options.bootstrapStartingEra when false, the world is created at year 0 without
+   *   pregenerating the configured starting era. Restoring a save uses this, because the
+   *   saved state already contains the era's generated history.
+   */
+  constructor(config: WorldConfig, options: { bootstrapStartingEra?: boolean } = {}) {
     this.prng = new PRNG(config.seed);
     this.noise = new SimplexNoise(this.prng);
     this.state = this.generateWorld(config);
+    if (options.bootstrapStartingEra !== false) this.bootstrapStartingEra();
+  }
+
+  /**
+   * Realises the configured starting era. Named eras are a promise about world state, so
+   * this runs genuine deterministic simulation and then consolidates the era's defining
+   * structures with dated events and causal links — never a cosmetic label.
+   */
+  private bootstrapStartingEra() {
+    applyStartingEra({
+      state: this.state,
+      prng: this.prng,
+      counters: {
+        species: this.speciesCounter,
+        settlement: this.settlementCounter,
+        polity: this.polityCounter,
+        culture: this.cultureCounter,
+        language: this.languageCounter
+      },
+      advance: years => {
+        if (years > 0) this.step(years);
+      }
+    });
+    this.state.isPaused = true;
+    this.state.simulationSpeed = 1;
+    this.state.eras = evaluateEras(this.state);
+    this.updateGlobalStats();
   }
 
   // Generate initial pristine planet and seed primordial life
@@ -442,8 +476,11 @@ export class SimulationEngine {
         }
       }
 
-      // Update territorial boundaries
-      updatePolityTerritories(this.state.polities, this.state.settlements, this.state.grid, this.state.config);
+      // Update territorial boundaries. This is an O(tiles x polities) sweep and borders are a
+      // slow-moving quantity, so it runs on a cadence rather than every single year.
+      if (year % 5 === 0) {
+        updatePolityTerritories(this.state.polities, this.state.settlements, this.state.grid, this.state.config);
+      }
 
       // 8. Diplomacy & Warfare (every ~20 years)
       if (year % 20 === 0) {
@@ -720,7 +757,9 @@ export class SimulationEngine {
 
   // Fork World into an alternate history branch
   public forkBranch(branchName: string): string {
-    const branchId = `branch_${Date.now()}`;
+    // Deterministic branch identity: derived from world time and branch count rather than
+    // wall-clock, so a saved world reloads with exactly the same branch graph.
+    const branchId = `branch_${this.state.currentYear}_${Object.keys(this.state.branches).length}`;
     this.state.branches[branchId] = {
       id: branchId,
       name: branchName,

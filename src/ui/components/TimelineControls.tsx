@@ -1,10 +1,11 @@
-// Timeline Navigation, Speed Controls, and Quick Navigation Toolbar
+// Time deck — the one permanent control surface.
+//
+// It answers three questions at a glance: what year is it, is time moving, and how fast.
+// Everything else about time (stepping, epochs) is one control away, and the deck floats
+// over the world instead of walling it off behind a toolbar.
 
 import React from 'react';
-import {
-  Play, Pause, FastForward, GitFork, Sparkles, BookOpen,
-  GitBranch, Languages, BarChart2, Save, Compass
-} from 'lucide-react';
+import { Play, Pause, ChevronsRight, HelpCircle, Sparkles, Compass } from 'lucide-react';
 import { WorldState } from '../../types/simulation';
 
 interface TimelineControlsProps {
@@ -13,15 +14,17 @@ interface TimelineControlsProps {
   onSetSpeed: (speed: number) => void;
   onStepYears: (years: number) => void;
   onOpenWhy: () => void;
-  onOpenTreeOfLife: () => void;
-  onOpenChronicle: () => void;
-  onOpenLanguages: () => void;
   onOpenWorldLab: () => void;
-  onOpenBranchCompare: () => void;
   onOpenDiscoveries: () => void;
-  onOpenStats: () => void;
-  onOpenSaveLoad: () => void;
 }
+
+const SPEEDS = [1, 5, 20, 100, 1000];
+
+const formatYear = (year: number): string => {
+  if (year < 10_000) return year.toLocaleString();
+  if (year < 1_000_000) return `${(year / 1000).toFixed(year % 1000 === 0 ? 0 : 1)}k`;
+  return `${(year / 1_000_000).toFixed(2)}M`;
+};
 
 export const TimelineControls: React.FC<TimelineControlsProps> = ({
   state,
@@ -29,167 +32,149 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
   onSetSpeed,
   onStepYears,
   onOpenWhy,
-  onOpenTreeOfLife,
-  onOpenChronicle,
-  onOpenLanguages,
   onOpenWorldLab,
-  onOpenBranchCompare,
-  onOpenDiscoveries,
-  onOpenStats,
-  onOpenSaveLoad
+  onOpenDiscoveries
 }) => {
   const { currentYear, isPaused, simulationSpeed, eras, discoveries } = state;
   const currentEra = eras.length > 0 ? eras[eras.length - 1] : null;
-  const uninspectedDiscoveries = discoveries.filter(d => !d.isInspected).length;
+  const newDiscoveries = discoveries.filter(d => !d.isInspected).length;
 
   return (
-    <div className="w-full bg-slate-900/95 border-t border-slate-800 backdrop-blur-md px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-slate-200 select-none shadow-2xl z-30">
-      {/* 1. Time Display & Current Era */}
-      <div className="flex items-center gap-3">
-        <div className="flex flex-col">
-          <div className="font-mono text-xl font-bold tracking-tight text-white flex items-center gap-2">
-            <span className="text-sky-400">YEAR</span>
-            <span>{currentYear.toLocaleString()}</span>
+    <div className="absolute inset-x-0 bottom-0 z-30 flex justify-center px-3 pb-3 pointer-events-none">
+      <div className="ws-panel pointer-events-auto flex items-center gap-2 sm:gap-3 px-2.5 py-2 max-w-full overflow-x-auto">
+        {/* Clock */}
+        <div
+          className="flex flex-col items-start pl-1 pr-2 sm:pr-3 border-r shrink-0"
+          style={{ borderColor: 'var(--ws-hairline)' }}
+          role="status"
+          aria-live="polite"
+          aria-label={`Current year ${currentYear}`}
+        >
+          <div className="flex items-baseline gap-1.5">
+            <span className="ws-numeric text-lg sm:text-xl font-semibold leading-none" style={{ color: 'var(--ws-ink)' }}>
+              {formatYear(currentYear)}
+            </span>
+            <span className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--ws-ink-faint)' }}>
+              yr
+            </span>
           </div>
-          {currentEra && (
-            <div className="text-[11px] font-sans font-medium text-amber-400 truncate max-w-[200px]">
-              {currentEra.name}
-            </div>
-          )}
+          <div
+            className="text-[11px] truncate max-w-[112px] sm:max-w-[190px] mt-0.5"
+            style={{ color: currentEra ? 'var(--ws-culture)' : 'var(--ws-ink-faint)' }}
+            title={currentEra?.name}
+          >
+            {currentEra?.name ?? 'Before history'}
+          </div>
         </div>
 
-        {/* Play/Pause & Speeds */}
-        <div className="flex items-center gap-1 bg-slate-800/90 rounded-lg p-1 border border-slate-700">
+        {/* Transport */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={onTogglePlay}
-            className={`p-2 rounded-md transition-all ${
-              isPaused
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                : 'bg-amber-600 hover:bg-amber-500 text-white'
-            }`}
-            title={isPaused ? 'Resume Time (Spacebar)' : 'Pause Time (Spacebar)'}
             aria-label={isPaused ? 'Resume Time' : 'Pause Time'}
+            title={isPaused ? 'Resume time (Space)' : 'Pause time (Space)'}
+            className="w-11 h-11 rounded-full flex items-center justify-center transition-all shrink-0"
+            style={{
+              background: isPaused ? 'var(--ws-accent)' : 'rgba(38, 50, 70, 0.94)',
+              color: isPaused ? '#04202e' : 'var(--ws-ink)',
+              border: `1px solid ${isPaused ? 'transparent' : 'var(--ws-hairline-strong)'}`
+            }}
           >
-            {isPaused ? <Play size={18} /> : <Pause size={18} />}
+            {isPaused ? <Play size={19} className="ml-0.5" /> : <Pause size={18} />}
           </button>
 
-          {[1, 5, 20, 100, 1000].map(speed => (
+          {/* Live state is stated in words, not only by colour. */}
+          <div className="hidden sm:flex flex-col leading-tight w-[54px]">
+            <span className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--ws-ink-faint)' }}>
+              {isPaused ? 'held' : 'running'}
+            </span>
+            <span className="ws-numeric text-[11px]" style={{ color: isPaused ? 'var(--ws-ink-faint)' : 'var(--ws-life)' }}>
+              {isPaused ? 'paused' : `${simulationSpeed}× yr/s`}
+            </span>
+          </div>
+        </div>
+
+        {/* Speed */}
+        <div
+          className="flex items-center gap-0.5 p-0.5 rounded-[10px] shrink-0"
+          style={{ background: 'rgba(8, 12, 20, 0.6)', border: '1px solid var(--ws-hairline)' }}
+          role="group"
+          aria-label="Simulation speed"
+        >
+          {SPEEDS.map(speed => (
             <button
               key={speed}
               onClick={() => onSetSpeed(speed)}
-              className={`px-2 py-1 text-xs font-mono rounded transition-all ${
+              aria-pressed={simulationSpeed === speed}
+              className="ws-chip ws-numeric px-2 py-1 text-[11px] rounded-md"
+              style={
                 simulationSpeed === speed
-                  ? 'bg-sky-600 text-white font-bold'
-                  : 'hover:bg-slate-700 text-slate-300'
-              }`}
+                  ? { background: 'rgba(111, 208, 255, 0.16)', borderColor: 'rgba(111, 208, 255, 0.55)', color: 'var(--ws-ink)' }
+                  : { background: 'transparent', borderColor: 'transparent', color: 'var(--ws-ink-muted)' }
+              }
             >
               {speed}×
             </button>
           ))}
         </div>
 
-        {/* Step Buttons */}
-        <div className="flex items-center gap-1">
+        {/* Jump */}
+        <div className="hidden md:flex items-center gap-1 shrink-0">
+          {[
+            { years: 100, label: '+100y' },
+            { years: 1000, label: '+1ky' }
+          ].map(step => (
+            <button
+              key={step.years}
+              onClick={() => onStepYears(step.years)}
+              className="ws-chip ws-numeric px-2.5 py-1.5 text-[11px] flex items-center gap-1"
+              style={{ color: 'var(--ws-ink-muted)' }}
+              title={`Advance ${step.years.toLocaleString()} years instantly`}
+            >
+              <ChevronsRight size={12} />
+              {step.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Curiosity paths stay adjacent to time, because consequences are what they explain. */}
+        <div className="flex items-center gap-1 pl-2 sm:pl-3 border-l shrink-0" style={{ borderColor: 'var(--ws-hairline)' }}>
           <button
-            onClick={() => onStepYears(10)}
-            className="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-xs font-mono flex items-center gap-1"
-            title="Step +10 Years"
+            onClick={onOpenWhy}
+            className="ws-chip px-2.5 py-1.5 text-[11px] font-medium flex items-center gap-1.5"
+            style={{ color: 'var(--ws-deep-time)' }}
+            title="Trace why the world is the way it is"
           >
-            +10y
+            <HelpCircle size={13} />
+            <span className="hidden sm:inline">Why?</span>
           </button>
           <button
-            onClick={() => onStepYears(100)}
-            className="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-xs font-mono flex items-center gap-1"
-            title="Step +100 Years"
+            onClick={onOpenWorldLab}
+            className="ws-chip px-2.5 py-1.5 text-[11px] font-medium flex items-center gap-1.5"
+            style={{ color: 'var(--ws-culture)' }}
+            title="Intervene in the world and watch what follows"
           >
-            +100y
+            <Sparkles size={13} />
+            <span className="hidden sm:inline">What if?</span>
           </button>
           <button
-            onClick={() => onStepYears(1000)}
-            className="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-xs font-mono text-amber-300 font-semibold"
-            title="Epoch Leap (+1,000 Years)"
+            onClick={onOpenDiscoveries}
+            className="ws-chip relative px-2.5 py-1.5 text-[11px] font-medium flex items-center gap-1.5"
+            style={{ color: newDiscoveries > 0 ? 'var(--ws-life)' : 'var(--ws-ink-muted)' }}
+            title="Things the world did that nobody planned"
           >
-            +1,000y
+            <Compass size={13} />
+            <span className="hidden lg:inline">Discoveries</span>
+            {newDiscoveries > 0 && (
+              <span
+                className="ws-numeric absolute -top-1.5 -right-1.5 text-[9px] px-1.5 rounded-full"
+                style={{ background: 'var(--ws-life)', color: '#04241a' }}
+              >
+                {newDiscoveries}
+              </span>
+            )}
           </button>
         </div>
-      </div>
-
-      {/* 2. Modal Navigation Hub Buttons */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <button
-          onClick={onOpenTreeOfLife}
-          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1.5 text-emerald-400"
-          title="Inspect Evolutionary Phylogeny"
-        >
-          <GitBranch size={15} />
-          <span>Tree of Life</span>
-        </button>
-
-        <button
-          onClick={onOpenChronicle}
-          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1.5 text-amber-400"
-          title="Historical Chronicle of Eras"
-        >
-          <BookOpen size={15} />
-          <span>Chronicle</span>
-        </button>
-
-        <button
-          onClick={onOpenLanguages}
-          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1.5 text-purple-400"
-          title="Language Families & Toponym Archaeology"
-        >
-          <Languages size={15} />
-          <span>Languages</span>
-        </button>
-
-        <button
-          onClick={onOpenDiscoveries}
-          className="relative px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1.5 text-rose-400"
-          title="Emergent Anomalies & Surprises"
-        >
-          <Compass size={15} />
-          <span>Discoveries</span>
-          {uninspectedDiscoveries > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full">
-              {uninspectedDiscoveries}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={onOpenWorldLab}
-          className="px-2.5 py-1.5 bg-purple-950 hover:bg-purple-900 border border-purple-700 rounded-lg text-xs font-medium flex items-center gap-1.5 text-purple-300"
-          title="World Lab: Catastrophes & Divine Interventions"
-        >
-          <Sparkles size={15} />
-          <span>World Lab</span>
-        </button>
-
-        <button
-          onClick={onOpenBranchCompare}
-          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1.5 text-cyan-400"
-          title="Alternate History Branching & Divergence"
-        >
-          <GitFork size={15} />
-          <span>Fork World</span>
-        </button>
-
-        <button
-          onClick={onOpenStats}
-          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1.5 text-slate-300"
-          title="Planetary Science & Metrics"
-        >
-          <BarChart2 size={15} />
-        </button>
-
-        <button
-          onClick={onOpenSaveLoad}
-          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1.5 text-slate-300"
-          title="Local Saves & World Export/Import"
-        >
-          <Save size={15} />
-        </button>
       </div>
     </div>
   );

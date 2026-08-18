@@ -1,16 +1,21 @@
-// WORLDSEED — Master Simulation Application with Megaloop Multi-View, Immersion Mode & 3D Tools
+// WORLDSEED — application shell.
+//
+// Composition rule: the simulation is the interface. The world fills the window; chrome
+// floats over it in four small clusters (identity, controls, time, inspection) and nothing
+// else is permanently on screen.
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  Layers, Search, Volume2, VolumeX, Sparkles,
-  Settings, Globe, Dna, Landmark, GitCompare
-} from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Search, Volume2, VolumeX, Sparkles, Globe2, Layers, Maximize2 } from 'lucide-react';
 import { WorldConfig, WorldState, InspectionSelection, WorldViewMode } from './types/simulation';
 import { SimulationEngine } from './simulation/engine';
+import { ERA_PROFILES } from './simulation/scenarios/startingEra';
 import { snapshotEngineRuntime, restoreEngineRuntime } from './persistence/runtimeSnapshot';
 import { soundscape } from './audio/soundscape';
 import { MapLayerMode, WorldCanvas } from './ui/components/WorldCanvas';
 import { TimelineControls } from './ui/components/TimelineControls';
+import { InstrumentsMenu } from './ui/components/InstrumentsMenu';
+import { FirstLightHint } from './ui/components/FirstLightHint';
+import { GenesisOverlay } from './ui/components/GenesisOverlay';
 import { InspectorPanel } from './ui/components/InspectorPanel';
 import { WhyModal } from './ui/components/WhyModal';
 import { TreeOfLifeModal } from './ui/components/TreeOfLifeModal';
@@ -46,6 +51,51 @@ const DEFAULT_CONFIG: WorldConfig = {
   sapienceLikelihood: 1.0
 };
 
+const VIEW_OPTIONS: Array<{ value: WorldViewMode; label: string }> = [
+  { value: 'GLOBE', label: 'Globe' },
+  { value: 'FLAT_ATLAS', label: 'Flat Atlas' },
+  { value: 'SQUARE_TILE', label: 'Square World' },
+  { value: 'SNOW_GLOBE', label: 'Snow Globe' },
+  { value: 'RELIEF_DIORAMA', label: 'Relief Diorama' },
+  { value: 'ORBITAL_VIEW', label: 'Orbital' }
+];
+
+const LAYER_OPTIONS: Array<{ value: MapLayerMode; label: string }> = [
+  { value: 'PHYSICAL', label: 'Physical Relief' },
+  { value: 'BIOMES', label: 'Biomes' },
+  { value: 'TEMPERATURE', label: 'Temperature' },
+  { value: 'RAINFALL', label: 'Rainfall' },
+  { value: 'BIODIVERSITY', label: 'Biodiversity' },
+  { value: 'POLITICAL', label: 'Territories' },
+  { value: 'SETTLEMENTS', label: 'Cities & Roads' },
+  { value: 'CULTURES', label: 'Cultures' },
+  { value: 'LANGUAGES', label: 'Languages' },
+  { value: 'DISEASES', label: 'Contagion' },
+  { value: 'RUINS_ARCHAEOLOGY', label: 'Ruins & Fossils' },
+  { value: 'ENVIRONMENTAL_SCARS', label: 'Environmental Scars' }
+];
+
+const ONBOARDING_KEY = 'worldseed.introSeen';
+
+type ModalId =
+  | 'WHY'
+  | 'TREE_OF_LIFE'
+  | 'CHRONICLE'
+  | 'LANGUAGES'
+  | 'WORLD_LAB'
+  | 'BRANCH'
+  | 'DISCOVERIES'
+  | 'STATS'
+  | 'SAVE_LOAD'
+  | 'HOTKEYS'
+  | 'SETTINGS'
+  | 'NEW_WORLD_WIZARD'
+  | 'COMMAND_PALETTE'
+  | 'TWIN_WORLDS'
+  | 'FIELD_GUIDE'
+  | 'CIVILIZATION_DOSSIER'
+  | null;
+
 export const App: React.FC = () => {
   const engineRef = useRef<SimulationEngine | null>(null);
   const [state, setState] = useState<WorldState>(() => {
@@ -55,33 +105,34 @@ export const App: React.FC = () => {
   });
 
   const [activeLayer, setActiveLayer] = useState<MapLayerMode>('PHYSICAL');
-  const [viewMode, setViewMode] = useState<WorldViewMode>('FLAT_ATLAS');
+  const [viewMode, setViewMode] = useState<WorldViewMode>('GLOBE');
   const [selectedEntity, setSelectedEntity] = useState<InspectionSelection | null>(null);
   const [pinnedEntity, setPinnedEntity] = useState<InspectionSelection | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const [isImmersionMode, setIsImmersionMode] = useState(false);
-
-  const [activeModal, setActiveModal] = useState<
-    | 'WHY'
-    | 'TREE_OF_LIFE'
-    | 'CHRONICLE'
-    | 'LANGUAGES'
-    | 'WORLD_LAB'
-    | 'BRANCH'
-    | 'DISCOVERIES'
-    | 'STATS'
-    | 'SAVE_LOAD'
-    | 'HOTKEYS'
-    | 'SETTINGS'
-    | 'NEW_WORLD_WIZARD'
-    | 'COMMAND_PALETTE'
-    | 'TWIN_WORLDS'
-    | 'FIELD_GUIDE'
-    | 'CIVILIZATION_DOSSIER'
-    | null
-  >(null);
+  const [showEffects, setShowEffects] = useState(true);
+  const [activeModal, setActiveModal] = useState<ModalId>(null);
   const [whyNodeId, setWhyNodeId] = useState<string | null>(null);
+  const [pendingWorld, setPendingWorld] = useState<WorldConfig | null>(null);
+
+  const [showIntro, setShowIntro] = useState(() => {
+    try {
+      return window.localStorage.getItem(ONBOARDING_KEY) !== 'true';
+    } catch {
+      return true;
+    }
+  });
+
+  const dismissIntro = useCallback(() => {
+    setShowIntro(false);
+    try {
+      window.localStorage.setItem(ONBOARDING_KEY, 'true');
+    } catch {
+      /* Private-mode storage refusal must never break the app. */
+    }
+  }, []);
 
   const ensureAudio = useCallback(() => {
     soundscape.init();
@@ -97,12 +148,11 @@ export const App: React.FC = () => {
 
   const handleStepYears = useCallback((years: number) => {
     if (!engineRef.current) return;
-    const newState = engineRef.current.step(years);
-    setState({ ...newState });
+    setState({ ...engineRef.current.step(years) });
   }, []);
 
-  // SimulationEngine owns the authoritative world state. Keep runtime controls synchronized
-  // so an engine tick cannot silently restore stale React-only values.
+  // SimulationEngine owns the authoritative world state. Runtime controls are written
+  // through to it so an engine tick cannot silently restore stale React-only values.
   const handleTogglePlay = useCallback(() => {
     ensureAudio();
     setState(prev => {
@@ -124,22 +174,39 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (state.isPaused) return;
-
     const intervalMs = Math.max(20, Math.floor(1000 / state.simulationSpeed));
     const stepCount = state.simulationSpeed > 100 ? 5 : 1;
-
     const interval = window.setInterval(() => {
       if (!engineRef.current) return;
-      const newState = engineRef.current.step(stepCount);
-      setState({ ...newState });
+      setState({ ...engineRef.current.step(stepCount) });
     }, intervalMs);
-
     return () => window.clearInterval(interval);
   }, [state.isPaused, state.simulationSpeed]);
 
+  // Later starting eras simulate real centuries before the first frame. Generation is
+  // deferred a frame so the genesis overlay is painted before the main thread blocks.
+  useEffect(() => {
+    if (!pendingWorld) return;
+    const handle = window.setTimeout(() => {
+      const engine = new SimulationEngine(pendingWorld);
+      engineRef.current = engine;
+      setSelectedEntity(null);
+      setPinnedEntity(null);
+      setState({ ...engine.getState() });
+      setPendingWorld(null);
+    }, 40);
+    return () => window.clearTimeout(handle);
+  }, [pendingWorld]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -148,6 +215,9 @@ export const App: React.FC = () => {
       }
 
       if (e.key === 'Tab') {
+        // Tab toggles Immersion Mode only while no dialog owns focus, so normal tab
+        // navigation still works everywhere it matters.
+        if (activeModal) return;
         e.preventDefault();
         setIsImmersionMode(prev => !prev);
         return;
@@ -164,25 +234,25 @@ export const App: React.FC = () => {
       else if (e.key === 'Escape') {
         setActiveModal(null);
         setSelectedEntity(null);
+        setSearchOpen(false);
       } else if (e.key.toLowerCase() === 't') setActiveModal('TREE_OF_LIFE');
       else if (e.key.toLowerCase() === 'c') setActiveModal('CHRONICLE');
-      else if (e.key.toLowerCase() === 'w') setActiveModal('WORLD_LAB');
-      else if (e.key.toLowerCase() === 'd') setActiveModal('DISCOVERIES');
+      else if (e.key.toLowerCase() === 'l') setActiveModal('WORLD_LAB');
+      else if (e.key.toLowerCase() === 'g') setActiveModal('DISCOVERIES');
       else if (e.key.toLowerCase() === 'v') {
-        const modes: WorldViewMode[] = ['FLAT_ATLAS', 'SQUARE_TILE', 'GLOBE', 'SNOW_GLOBE', 'RELIEF_DIORAMA', 'ORBITAL_VIEW'];
-        const nextIdx = (modes.indexOf(viewMode) + 1) % modes.length;
-        setViewMode(modes[nextIdx]);
+        const nextIdx = (VIEW_OPTIONS.findIndex(o => o.value === viewMode) + 1) % VIEW_OPTIONS.length;
+        setViewMode(VIEW_OPTIONS[nextIdx].value);
       } else if (e.key === '?') setActiveModal('HOTKEYS');
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleTogglePlay, handleSetSpeed, viewMode]);
+  }, [activeModal, handleTogglePlay, handleSetSpeed, viewMode]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchQuery.trim()) return;
     const q = searchQuery.toLowerCase().trim();
+    if (!q) return;
 
     const foundSpecies = Object.values(state.species).find(
       s => s.commonName.toLowerCase().includes(q) || s.scientificName.toLowerCase().includes(q)
@@ -200,20 +270,21 @@ export const App: React.FC = () => {
       return;
     }
 
-    const foundRuin = Object.values(state.ruins).find(r => r.originalName.toLowerCase().includes(q));
-    if (foundRuin) {
-      setSelectedEntity({ type: 'RUIN', id: foundRuin.id });
-      setSearchQuery('');
+    for (const row of state.grid) {
+      for (const tile of row) {
+        const ruin = tile.ruins.find(r => r.originalName.toLowerCase().includes(q));
+        if (ruin) {
+          setSelectedEntity({ type: 'RUIN', id: ruin.id });
+          setSearchQuery('');
+          return;
+        }
+      }
     }
   };
 
   const handleCreateNewWorld = (newConfig: WorldConfig) => {
-    const newEngine = new SimulationEngine(newConfig);
-    engineRef.current = newEngine;
-    setSelectedEntity(null);
-    setPinnedEntity(null);
     setActiveModal(null);
-    setState(newEngine.getState());
+    setPendingWorld(newConfig);
   };
 
   const handleApplyIntervention = (type: any, params?: any) => {
@@ -231,7 +302,8 @@ export const App: React.FC = () => {
   };
 
   const handleOpenWhy = (nodeId?: string) => {
-    const id = nodeId || (selectedEntity ? `cause_${selectedEntity.type.toLowerCase()}_${selectedEntity.id}` : Object.keys(state.causalGraph)[0]);
+    const id =
+      nodeId || (selectedEntity ? `cause_${selectedEntity.type.toLowerCase()}_${selectedEntity.id}` : Object.keys(state.causalGraph)[0]);
     setWhyNodeId(id);
     setActiveModal('WHY');
   };
@@ -243,165 +315,179 @@ export const App: React.FC = () => {
   };
 
   const persistableState = snapshotEngineRuntime(engineRef.current, state);
+  const eraProfile = ERA_PROFILES[pendingWorld?.startingEra || 'PREBIOTIC'];
+  const showChrome = !isImmersionMode;
 
   return (
-    <div className="flex flex-col w-screen h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none">
-      {!isImmersionMode && (
-        <header className="h-14 bg-slate-900/90 border-b border-slate-800 backdrop-blur-md px-4 flex items-center justify-between z-30 shadow-md">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
-                className="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-600 via-indigo-600 to-emerald-500 flex items-center justify-center font-serif font-black text-white text-base shadow-lg shadow-sky-950 hover:scale-105 transition-all"
-                title="Open Planet Genesis Wizard"
+    <div className="relative w-screen h-screen overflow-hidden select-none" style={{ background: 'var(--ws-void)', color: 'var(--ws-ink)' }}>
+      <WorldCanvas
+        state={state}
+        activeLayer={activeLayer}
+        viewMode={viewMode}
+        selectedEntity={selectedEntity}
+        pinnedEntity={pinnedEntity}
+        showEffects={showEffects}
+        onSelectEntity={selection => {
+          setSelectedEntity(selection);
+          if (selection) dismissIntro();
+        }}
+        onUnpinEntity={() => setPinnedEntity(null)}
+        onOpenWhy={handleOpenWhy}
+      />
+
+      {showChrome && (
+        <>
+          {/* Identity — small, top-left, never a title bar. */}
+          <div className="absolute top-3 left-3 z-30 flex items-center gap-2">
+            <button
+              onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
+              title="Create a new world"
+              className="ws-panel flex items-center gap-2.5 pl-2.5 pr-3 h-9"
+            >
+              <span
+                className="ws-display text-[11px] w-5 h-5 rounded-full flex items-center justify-center"
+                style={{ background: 'linear-gradient(140deg, var(--ws-accent), var(--ws-life))', color: '#04202e' }}
               >
                 W
-              </button>
-              <div>
-                <h1 className="font-serif font-black tracking-wider text-sm text-white flex items-center gap-1.5">
-                  <span>WORLDSEED</span>
-                  <span className="text-[10px] font-mono font-normal text-sky-400 bg-sky-950 px-1.5 rounded border border-sky-800">
-                    {state.config.genre || 'REALISTIC'}
-                  </span>
-                </h1>
-                <div className="text-[10px] font-mono text-slate-400">
-                  Seed: <span className="text-amber-400">{state.config.seed}</span> | Topology: <span className="text-sky-300">{state.config.topology || 'SPHERICAL'}</span>
-                </div>
-              </div>
+              </span>
+              <span className="ws-display text-[11.5px] leading-none" style={{ letterSpacing: '0.18em' }}>
+                WORLDSEED
+              </span>
+            </button>
+            <div
+              className="ws-panel hidden md:flex items-center gap-2 h-9 px-3 ws-numeric text-[10.5px]"
+              style={{ color: 'var(--ws-ink-faint)' }}
+            >
+              <span>seed {state.config.seed}</span>
+              <span style={{ color: 'var(--ws-hairline-strong)' }}>·</span>
+              <span>{(state.config.genre || 'REALISTIC').toLowerCase().replace(/_/g, ' ')}</span>
+              <span style={{ color: 'var(--ws-hairline-strong)' }}>·</span>
+              <span>{(state.config.topology || 'SPHERICAL').toLowerCase().replace(/_/g, ' ')}</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <form onSubmit={handleSearchSubmit} className="relative w-64 max-w-xs hidden md:block">
-              <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search species, cities, ruins..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-800/90 border border-slate-700 rounded-lg pl-8 pr-12 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 font-sans"
-              />
-              <kbd
-                onClick={() => setActiveModal('COMMAND_PALETTE')}
-                className="absolute right-2 top-2 px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[9px] font-mono text-slate-400 cursor-pointer hover:text-white"
+          {/* Controls — top-right, one row, degrades gracefully on narrow viewports. */}
+          <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
+            <form onSubmit={handleSearchSubmit} className="relative flex items-center">
+              <button
+                type="button"
+                onClick={() => setSearchOpen(v => !v)}
+                aria-label="Search the world"
+                aria-expanded={searchOpen}
+                className="ws-chip flex items-center justify-center w-9 h-9 lg:hidden"
+                style={{ color: 'var(--ws-ink-muted)' }}
               >
-                ⌘K
-              </kbd>
+                <Search size={15} />
+              </button>
+              <div className={`${searchOpen ? 'flex' : 'hidden'} lg:flex items-center absolute lg:static right-0 top-11 lg:top-auto`}>
+                <Search size={13} className="absolute left-2.5 pointer-events-none" style={{ color: 'var(--ws-ink-faint)' }} />
+                <input
+                  type="search"
+                  placeholder="Find a species, city or ruin…"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  aria-label="Search species, cities and ruins"
+                  className="ws-chip w-[228px] h-9 pl-7 pr-2 text-[12px] outline-none"
+                  style={{ color: 'var(--ws-ink)' }}
+                />
+              </div>
             </form>
 
-            <button
-              onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
-              className="px-2.5 py-1 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow"
-            >
-              <Sparkles size={13} />
-              <span className="hidden sm:inline">New World</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700 text-xs font-mono">
-              <Globe size={14} className="text-amber-400" />
+            <label className="ws-chip flex items-center gap-1.5 h-9 pl-2.5" title="Presentation mode">
+              <Globe2 size={14} style={{ color: 'var(--ws-accent)' }} />
+              <span className="ws-sr-only">World view</span>
               <select
                 value={viewMode}
                 onChange={e => setViewMode(e.target.value as WorldViewMode)}
-                className="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer"
+                aria-label="World view"
+                className="ws-select bg-transparent text-[12px] h-9 outline-none cursor-pointer"
+                style={{ color: 'var(--ws-ink)' }}
               >
-                <option value="FLAT_ATLAS" className="bg-slate-900 text-white">Flat Atlas (2D)</option>
-                <option value="SQUARE_TILE" className="bg-slate-900 text-white">Square Board (Slab)</option>
-                <option value="GLOBE" className="bg-slate-900 text-white">3D Globe</option>
-                <option value="SNOW_GLOBE" className="bg-slate-900 text-white">Snow Globe Diorama</option>
-                <option value="RELIEF_DIORAMA" className="bg-slate-900 text-white">Relief Terrain Slab</option>
-                <option value="ORBITAL_VIEW" className="bg-slate-900 text-white">Orbital Cosmos</option>
+                {VIEW_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
-            </div>
+            </label>
 
-            <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700 text-xs font-mono">
-              <Layers size={14} className="text-sky-400" />
+            <label className="ws-chip hidden sm:flex items-center gap-1.5 h-9 pl-2.5" title="Map layer">
+              <Layers size={14} style={{ color: 'var(--ws-life)' }} />
+              <span className="ws-sr-only">Map layer</span>
               <select
                 value={activeLayer}
                 onChange={e => setActiveLayer(e.target.value as MapLayerMode)}
-                className="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer"
+                aria-label="Map layer"
+                className="ws-select bg-transparent text-[12px] h-9 outline-none cursor-pointer"
+                style={{ color: 'var(--ws-ink)' }}
               >
-                <option value="PHYSICAL" className="bg-slate-900 text-white">Physical Relief</option>
-                <option value="BIOMES" className="bg-slate-900 text-white">Whittaker Biomes</option>
-                <option value="TEMPERATURE" className="bg-slate-900 text-white">Temperature Thermal</option>
-                <option value="RAINFALL" className="bg-slate-900 text-white">Rainfall & Moisture</option>
-                <option value="BIODIVERSITY" className="bg-slate-900 text-white">Species Biodiversity</option>
-                <option value="POLITICAL" className="bg-slate-900 text-white">Polity Territories</option>
-                <option value="SETTLEMENTS" className="bg-slate-900 text-white">Cities & Roads</option>
-                <option value="CULTURES" className="bg-slate-900 text-white">Cultural Footprints</option>
-                <option value="LANGUAGES" className="bg-slate-900 text-white">Language Families</option>
-                <option value="DISEASES" className="bg-slate-900 text-white">Contagion Vectors</option>
-                <option value="RUINS_ARCHAEOLOGY" className="bg-slate-900 text-white">Ruins & Fossils</option>
-                <option value="ENVIRONMENTAL_SCARS" className="bg-slate-900 text-white">Environmental Scars</option>
+                {LAYER_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
-            </div>
+            </label>
 
             <button
-              onClick={() => setActiveModal('FIELD_GUIDE')}
-              className="p-2 bg-slate-800 border border-slate-700 text-emerald-400 hover:text-white rounded-lg"
-              title="3D Biological Field Guide"
+              onClick={() => setActiveModal('NEW_WORLD_WIZARD')}
+              className="ws-chip hidden sm:flex items-center gap-1.5 h-9 px-2.5 text-[12px]"
+              style={{ color: 'var(--ws-culture)' }}
+              title="Create a new world"
             >
-              <Dna size={16} />
+              <Sparkles size={14} />
+              <span className="hidden xl:inline">New World</span>
             </button>
 
-            <button
-              onClick={() => setActiveModal('CIVILIZATION_DOSSIER')}
-              className="p-2 bg-slate-800 border border-slate-700 text-amber-400 hover:text-white rounded-lg"
-              title="Civilization Dossier & 3D Architecture"
-            >
-              <Landmark size={16} />
-            </button>
+            <InstrumentsMenu
+              onOpenTreeOfLife={() => setActiveModal('TREE_OF_LIFE')}
+              onOpenFieldGuide={() => setActiveModal('FIELD_GUIDE')}
+              onOpenChronicle={() => setActiveModal('CHRONICLE')}
+              onOpenLanguages={() => setActiveModal('LANGUAGES')}
+              onOpenCivilizationDossier={() => setActiveModal('CIVILIZATION_DOSSIER')}
+              onOpenBranchCompare={() => setActiveModal('BRANCH')}
+              onOpenTwinWorlds={() => setActiveModal('TWIN_WORLDS')}
+              onOpenStats={() => setActiveModal('STATS')}
+              onOpenSaveLoad={() => setActiveModal('SAVE_LOAD')}
+              onOpenSettings={() => setActiveModal('SETTINGS')}
+              onOpenHotkeys={() => setActiveModal('HOTKEYS')}
+            />
 
             <button
-              onClick={() => setActiveModal('TWIN_WORLDS')}
-              className="p-2 bg-slate-800 border border-slate-700 text-indigo-400 hover:text-white rounded-lg"
-              title="Twin-Worlds Counterfactuals"
+              onClick={() => setIsImmersionMode(true)}
+              className="ws-chip hidden sm:flex items-center justify-center w-9 h-9"
+              style={{ color: 'var(--ws-ink-muted)' }}
+              title="Immersion Mode (Tab)"
+              aria-label="Enter Immersion Mode"
             >
-              <GitCompare size={16} />
-            </button>
-
-            <button
-              onClick={() => setActiveModal('SETTINGS')}
-              className="p-2 bg-slate-800 border border-slate-700 text-slate-400 hover:text-white rounded-lg"
-              title="Settings Hub"
-            >
-              <Settings size={16} />
+              <Maximize2 size={14} />
             </button>
 
             <button
               onClick={toggleAudio}
-              className={`p-2 rounded-lg border transition-all ${
-                isAudioMuted
-                  ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-                  : 'bg-indigo-950 border-indigo-700 text-indigo-300 shadow-md shadow-indigo-950'
-              }`}
-              title={isAudioMuted ? 'Unmute Ambient Soundscape' : 'Mute Soundscape'}
+              className="ws-chip flex items-center justify-center w-9 h-9"
+              style={{ color: isAudioMuted ? 'var(--ws-ink-faint)' : 'var(--ws-accent)' }}
+              title={isAudioMuted ? 'Enable event sounds' : 'Mute event sounds'}
               aria-label="Soundscape Audio"
+              aria-pressed={!isAudioMuted}
             >
-              {isAudioMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              {isAudioMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
             </button>
           </div>
-        </header>
-      )}
 
-      <main className="flex-1 relative w-full h-full overflow-hidden">
-        <WorldCanvas
-          state={state}
-          activeLayer={activeLayer}
-          viewMode={viewMode}
-          selectedEntity={selectedEntity}
-          pinnedEntity={pinnedEntity}
-          onSelectEntity={setSelectedEntity}
-          onUnpinEntity={() => setPinnedEntity(null)}
-          onOpenWhy={handleOpenWhy}
-        />
+          <TimelineControls
+            state={state}
+            onTogglePlay={() => {
+              dismissIntro();
+              handleTogglePlay();
+            }}
+            onSetSpeed={handleSetSpeed}
+            onStepYears={handleStepYears}
+            onOpenWhy={() => handleOpenWhy()}
+            onOpenWorldLab={() => setActiveModal('WORLD_LAB')}
+            onOpenDiscoveries={() => setActiveModal('DISCOVERIES')}
+          />
 
-        {isImmersionMode && (
-          <ImmersionOverlay state={state} onExitImmersion={() => setIsImmersionMode(false)} onTogglePlay={handleTogglePlay} />
-        )}
-
-        {!isImmersionMode && (
           <InspectorPanel
             selection={selectedEntity}
             state={state}
@@ -412,27 +498,26 @@ export const App: React.FC = () => {
             onOpenWhyForNode={handleOpenWhy}
             onOpenFieldGuide={() => setActiveModal('FIELD_GUIDE')}
             onOpenCivilizationDossier={() => setActiveModal('CIVILIZATION_DOSSIER')}
+            onOpenWorldLab={() => setActiveModal('WORLD_LAB')}
           />
-        )}
-      </main>
 
-      {!isImmersionMode && (
-        <TimelineControls
-          state={state}
-          onTogglePlay={handleTogglePlay}
-          onSetSpeed={handleSetSpeed}
-          onStepYears={handleStepYears}
-          onOpenWhy={() => handleOpenWhy()}
-          onOpenTreeOfLife={() => setActiveModal('TREE_OF_LIFE')}
-          onOpenChronicle={() => setActiveModal('CHRONICLE')}
-          onOpenLanguages={() => setActiveModal('LANGUAGES')}
-          onOpenWorldLab={() => setActiveModal('WORLD_LAB')}
-          onOpenBranchCompare={() => setActiveModal('BRANCH')}
-          onOpenDiscoveries={() => setActiveModal('DISCOVERIES')}
-          onOpenStats={() => setActiveModal('STATS')}
-          onOpenSaveLoad={() => setActiveModal('SAVE_LOAD')}
-        />
+          {showIntro && !selectedEntity && !activeModal && (
+            <FirstLightHint
+              onDismiss={dismissIntro}
+              onStartTime={() => {
+                dismissIntro();
+                if (state.isPaused) handleTogglePlay();
+              }}
+            />
+          )}
+        </>
       )}
+
+      {isImmersionMode && (
+        <ImmersionOverlay state={state} onExitImmersion={() => setIsImmersionMode(false)} onTogglePlay={handleTogglePlay} />
+      )}
+
+      {pendingWorld && <GenesisOverlay eraLabel={pendingWorld.startingEra || 'PREBIOTIC'} eraSummary={eraProfile.summary} />}
 
       {activeModal === 'WHY' && (
         <WhyModal nodeId={whyNodeId} state={state} onClose={() => setActiveModal(null)} onSelectNode={nodeId => setWhyNodeId(nodeId)} />
@@ -489,6 +574,8 @@ export const App: React.FC = () => {
           onLoadWorld={loaded => {
             const restoredEngine = restoreEngineRuntime(loaded);
             engineRef.current = restoredEngine;
+            setSelectedEntity(null);
+            setPinnedEntity(null);
             setState({ ...restoredEngine.getState() });
           }}
           onResetWorld={handleCreateNewWorld}
@@ -498,7 +585,13 @@ export const App: React.FC = () => {
       {activeModal === 'HOTKEYS' && <HotkeysModal onClose={() => setActiveModal(null)} />}
 
       {activeModal === 'SETTINGS' && (
-        <SettingsModal currentViewMode={viewMode} onSetViewMode={setViewMode} onClose={() => setActiveModal(null)} />
+        <SettingsModal
+          currentViewMode={viewMode}
+          onSetViewMode={setViewMode}
+          showEffects={showEffects}
+          onSetShowEffects={setShowEffects}
+          onClose={() => setActiveModal(null)}
+        />
       )}
 
       {activeModal === 'NEW_WORLD_WIZARD' && (

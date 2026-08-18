@@ -1,7 +1,11 @@
-// Deep Contextual Inspector Panel with Curiosity Triad (FOLLOW / WHY? / WHAT IF?)
+// Contextual inspection — what you found, where it is, how it got there, and what you can
+// do about it.
+//
+// Presented as a field record rather than a property grid: an identity line, a short read
+// of the thing in its place, then the three curiosity paths (FOLLOW / WHY? / WHAT IF?).
 
 import React from 'react';
-import { X, Search, Pin, Shield, Heart, Zap, Globe, Book, Activity, AlertTriangle, ChevronRight, Dna, Landmark, Sparkles, Navigation } from 'lucide-react';
+import { X, Pin, ChevronRight, Dna, Landmark, Sparkles, HelpCircle } from 'lucide-react';
 import { InspectionSelection, WorldState } from '../../types/simulation';
 
 interface InspectorPanelProps {
@@ -14,8 +18,28 @@ interface InspectorPanelProps {
   onOpenWhyForNode: (nodeId: string) => void;
   onOpenFieldGuide?: () => void;
   onOpenCivilizationDossier?: () => void;
-  onOpenWhatIf?: (prompt: string) => void;
+  onOpenWorldLab?: () => void;
 }
+
+const Stat: React.FC<{ label: string; value: React.ReactNode; tone?: string }> = ({ label, value, tone }) => (
+  <div className="flex items-baseline justify-between gap-3 py-1">
+    <span className="text-[11px]" style={{ color: 'var(--ws-ink-faint)' }}>
+      {label}
+    </span>
+    <span className="ws-numeric text-[11.5px] text-right" style={{ color: tone || 'var(--ws-ink)' }}>
+      {value}
+    </span>
+  </div>
+);
+
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <section>
+    <h4 className="text-[10px] uppercase tracking-[0.16em] mb-1.5" style={{ color: 'var(--ws-ink-faint)' }}>
+      {title}
+    </h4>
+    {children}
+  </section>
+);
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   selection,
@@ -27,232 +51,331 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onOpenWhyForNode,
   onOpenFieldGuide,
   onOpenCivilizationDossier,
-  onOpenWhatIf
+  onOpenWorldLab
 }) => {
   if (!selection) return null;
 
-  const { grid, species, settlements, polities, cultures, languages, ruins, myths, pathogens } = state;
+  const { grid, species, settlements, polities, cultures, ruins } = state;
   const isPinned = pinnedEntity?.id === selection.id && pinnedEntity?.type === selection.type;
 
+  // ---- resolve subject -------------------------------------------------------------
+  let kicker = selection.type.toLowerCase();
+  let title = 'Unknown';
+  let subtitle: string | null = null;
+  let lede: string | null = null;
+  let causalNodeId: string | null = null;
+  let accent = 'var(--ws-accent)';
+  let body: React.ReactNode = null;
+
+  if (selection.type === 'TILE') {
+    const [tx, ty] = selection.id.split(',').map(Number);
+    const tile = grid[ty]?.[tx];
+    if (!tile) return null;
+
+    const neighbours = [
+      grid[ty]?.[(tx + 1) % state.config.width],
+      grid[ty]?.[(tx - 1 + state.config.width) % state.config.width],
+      grid[ty - 1]?.[tx],
+      grid[ty + 1]?.[tx]
+    ].filter(Boolean);
+    const coastal = neighbours.some(n => n!.isWater) && !tile.isWater;
+
+    kicker = 'place';
+    title = tile.biome.replace(/_/g, ' ').toLowerCase();
+    subtitle = `${tile.x}, ${tile.y} · tectonic plate ${tile.plateId}`;
+    accent = tile.isWater ? 'var(--ws-accent)' : 'var(--ws-life)';
+    lede = [
+      coastal ? 'A coastal margin' : tile.isWater ? 'Open water' : 'Inland ground',
+      tile.riverFlow > 0.1 ? 'carrying a live watercourse' : null,
+      tile.elevation > state.config.seaLevel + 0.45 ? 'high above the surrounding land' : null,
+      tile.environmentalDamage > 0.3 ? 'and visibly damaged' : null
+    ]
+      .filter(Boolean)
+      .join(', ')
+      .concat('.');
+
+    body = (
+      <>
+        <Section title="Conditions">
+          <Stat label="Elevation" value={`${Math.round(tile.elevation * 1000)} m`} />
+          <Stat label="Temperature" value={`${tile.currentTemp} °C`} />
+          <Stat label="Rainfall" value={`${Math.round(tile.rainfall * 100)}%`} />
+          <Stat label="Soil fertility" value={`${Math.round(tile.soilFertility * 100)}%`} />
+        </Section>
+
+        <Section title="Living load">
+          <Stat label="Biomass" value={Math.round(tile.biomass).toLocaleString()} tone="var(--ws-life)" />
+          <Stat label="Carrying capacity" value={Math.round(tile.carryingCapacity).toLocaleString()} />
+          <Stat label="Population density" value={Math.round(tile.populationDensity).toLocaleString()} tone="var(--ws-culture)" />
+          {tile.environmentalDamage > 0.02 && (
+            <Stat label="Environmental damage" value={`${Math.round(tile.environmentalDamage * 100)}%`} tone="var(--ws-alarm)" />
+          )}
+        </Section>
+
+        {tile.fossils.length > 0 && (
+          <Section title={`Strata (${tile.fossils.length})`}>
+            {tile.fossils.slice(0, 4).map(f => (
+              <div key={`${f.speciesId}-${f.geologicalDepthMeters}`} className="flex items-baseline justify-between gap-3 py-1">
+                <span className="text-[11.5px] truncate" style={{ color: 'var(--ws-deep-time)' }}>
+                  {f.speciesName}
+                </span>
+                <span className="ws-numeric text-[10.5px] shrink-0" style={{ color: 'var(--ws-ink-faint)' }}>
+                  −{f.geologicalDepthMeters}m · yr {f.extinctionYear}
+                </span>
+              </div>
+            ))}
+          </Section>
+        )}
+
+        {tile.ruins.length > 0 && (
+          <Section title="Buried here">
+            {tile.ruins.map(r => (
+              <button
+                key={r.id}
+                onClick={() => onSelectEntity({ type: 'RUIN', id: r.id })}
+                className="ws-chip w-full text-left px-2.5 py-2 mb-1 flex items-center justify-between gap-2"
+              >
+                <span className="min-w-0">
+                  <span className="block text-[12px] truncate" style={{ color: 'var(--ws-deep-time)' }}>
+                    {r.originalName}
+                  </span>
+                  <span className="ws-numeric block text-[10.5px]" style={{ color: 'var(--ws-ink-faint)' }}>
+                    fell in year {r.collapsedYear}
+                  </span>
+                </span>
+                <ChevronRight size={13} style={{ color: 'var(--ws-ink-faint)' }} />
+              </button>
+            ))}
+          </Section>
+        )}
+      </>
+    );
+  } else if (selection.type === 'SPECIES') {
+    const s = species[selection.id];
+    if (!s) return null;
+    kicker = s.isSapient ? 'sapient lineage' : 'lineage';
+    title = s.commonName;
+    subtitle = s.scientificName;
+    accent = s.isExtinct ? 'var(--ws-deep-time)' : 'var(--ws-life)';
+    causalNodeId = s.causalNodeId;
+
+    const parent = s.parentSpeciesId ? species[s.parentSpeciesId] : null;
+    const home = grid[s.originTile.y]?.[s.originTile.x];
+    lede = `${s.genome.bodySizeMeters} m ${s.morphology.replace(/_/g, ' ').toLowerCase()}, ${s.trophicLevel
+      .replace(/_/g, ' ')
+      .toLowerCase()}, first appearing in the ${home ? home.biome.replace(/_/g, ' ').toLowerCase() : 'open world'}${
+      s.isExtinct ? `, extinct since year ${s.extinctionYear}` : ''
+    }.`;
+
+    body = (
+      <>
+        <Section title="Genome">
+          <Stat label="Body size" value={`${s.genome.bodySizeMeters} m`} />
+          <Stat label="Speed" value={`${s.genome.speedKmh} km/h`} />
+          <Stat label="Lifespan" value={`${s.genome.lifespanYears} yr`} />
+          <Stat label="Cognition" value={`${s.genome.cognition}/100`} tone={s.isSapient ? 'var(--ws-deep-time)' : undefined} />
+          <Stat label="Locomotion" value={s.genome.locomotion.replace(/_/g, ' ').toLowerCase()} />
+          <Stat label="Senses" value={s.genome.sensoryModality.replace(/_/g, ' ').toLowerCase()} />
+          <Stat label="Manipulation" value={s.genome.manipulationOrgan.replace(/_/g, ' ').toLowerCase()} />
+        </Section>
+
+        <Section title="Standing">
+          <Stat
+            label="Total population"
+            value={s.isExtinct ? 'extinct' : s.totalPopulation.toLocaleString()}
+            tone={s.isExtinct ? 'var(--ws-alarm)' : 'var(--ws-life)'}
+          />
+          {s.sapienceEmergenceYear !== undefined && <Stat label="Sapience since" value={`year ${s.sapienceEmergenceYear}`} />}
+          {s.extinctionCause && <Stat label="Cause of loss" value={s.extinctionCause} tone="var(--ws-alarm)" />}
+        </Section>
+
+        {parent && (
+          <Section title="Descent">
+            <button
+              onClick={() => onSelectEntity({ type: 'SPECIES', id: parent.id })}
+              className="ws-chip w-full text-left px-2.5 py-2 flex items-center justify-between gap-2"
+            >
+              <span className="min-w-0">
+                <span className="block text-[10.5px]" style={{ color: 'var(--ws-ink-faint)' }}>
+                  diverged from
+                </span>
+                <span className="block text-[12px] truncate" style={{ color: 'var(--ws-ink)' }}>
+                  {parent.commonName}
+                </span>
+              </span>
+              <ChevronRight size={13} style={{ color: 'var(--ws-ink-faint)' }} />
+            </button>
+          </Section>
+        )}
+      </>
+    );
+  } else if (selection.type === 'SETTLEMENT') {
+    const sett = settlements[selection.id];
+    if (!sett) return null;
+    const culture = cultures[sett.cultureId];
+    const polity = polities[sett.polityId];
+    const tile = grid[sett.tileY]?.[sett.tileX];
+
+    kicker = sett.isAbandoned ? 'abandoned settlement' : sett.tier.toLowerCase();
+    title = sett.name;
+    subtitle = culture ? `of the ${culture.name}` : null;
+    accent = 'var(--ws-culture)';
+    causalNodeId = sett.causalNodeId;
+    lede = `Founded in year ${sett.foundedYear}${
+      tile ? ` on ${tile.riverFlow > 0.1 ? 'a river' : tile.soilFertility > 0.6 ? 'rich soil' : 'open ground'} in the ${tile.biome
+        .replace(/_/g, ' ')
+        .toLowerCase()}` : ''
+    }${sett.isAbandoned ? `, abandoned in year ${sett.abandonmentYear}` : ''}.`;
+
+    const built = Object.entries(sett.infrastructure)
+      .filter(([, v]) => v)
+      .map(([k]) => k.replace(/^has/, '').replace(/([A-Z])/g, ' $1').trim().toLowerCase());
+
+    body = (
+      <>
+        <Section title="The place today">
+          <Stat label="Population" value={sett.population.toLocaleString()} tone="var(--ws-culture)" />
+          <Stat label="Food reserve" value={`${sett.foodSupplyDays} days`} tone={sett.foodSupplyDays < 60 ? 'var(--ws-alarm)' : undefined} />
+          {polity && <Stat label="Polity" value={polity.name} />}
+          {polity && <Stat label="Government" value={polity.governmentType.replace(/_/g, ' ').toLowerCase()} />}
+          {polity && <Stat label="Technologies" value={polity.discoveredTechIds.length} />}
+        </Section>
+
+        {built.length > 0 && (
+          <Section title="What they built">
+            <p className="text-[11.5px] leading-relaxed" style={{ color: 'var(--ws-ink-muted)' }}>
+              {built.join(', ')}
+            </p>
+          </Section>
+        )}
+
+        {culture && (
+          <Section title="How they live">
+            <Stat label="Kinship" value={culture.kinship.replace(/_/g, ' ').toLowerCase()} />
+            <Stat label="Building" value={culture.architecture.replace(/_/g, ' ').toLowerCase()} />
+            <Stat label="Burial" value={culture.burial.replace(/_/g, ' ').toLowerCase()} />
+          </Section>
+        )}
+      </>
+    );
+  } else if (selection.type === 'RUIN') {
+    const r = ruins[selection.id];
+    if (!r) return null;
+    kicker = 'ruin';
+    title = `Ruins of ${r.originalName}`;
+    subtitle = `standing from year ${r.foundedYear} to ${r.collapsedYear}`;
+    accent = 'var(--ws-deep-time)';
+    causalNodeId = r.id;
+    lede = r.collapseCause;
+
+    body = (
+      <>
+        <Section title="Condition">
+          <Stat label="Decay" value={`${Math.round(r.decayLevel * 100)}%`} />
+          <Stat label="Excavated" value={`${Math.round(r.excavationLevel * 100)}%`} />
+          <Stat label="Stood for" value={`${r.collapsedYear - r.foundedYear} years`} />
+          {r.shelteredTroglobites && <Stat label="Now sheltering" value="subterranean life" tone="var(--ws-life)" />}
+        </Section>
+        <Section title="Still standing">
+          <p className="text-[11.5px] leading-relaxed" style={{ color: 'var(--ws-ink-muted)' }}>
+            {r.prominentStructures.join(', ')}
+          </p>
+        </Section>
+        {r.artifactsRemaining.length > 0 && (
+          <Section title="Left behind">
+            <p className="text-[11.5px] leading-relaxed" style={{ color: 'var(--ws-ink-muted)' }}>
+              {r.artifactsRemaining.join(', ')}
+            </p>
+          </Section>
+        )}
+      </>
+    );
+  } else {
+    title = selection.id;
+  }
+
   return (
-    <div className="absolute top-16 right-4 w-96 max-h-[calc(100vh-140px)] bg-slate-900/95 border border-slate-700/80 backdrop-blur-xl rounded-xl shadow-2xl flex flex-col z-20 overflow-hidden text-slate-200 animate-fade-in select-none">
-      {/* Header */}
-      <div className="px-4 py-3 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800">
-            {selection.type}
-          </span>
-          <button
-            onClick={() => onPinEntity(selection)}
-            className={`p-1 rounded text-xs flex items-center gap-1 font-mono transition-all ${
-              isPinned
-                ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700'
-            }`}
-            title="Follow this subject across deep time"
-          >
-            <Pin size={12} />
-            <span>{isPinned ? 'Following' : 'Follow'}</span>
+    <aside
+      className="ws-panel ws-rise absolute right-3 top-16 z-20 flex flex-col overflow-hidden
+                 w-[min(340px,calc(100vw-24px))] max-h-[calc(100vh-190px)]"
+      style={{ background: 'var(--ws-surface-strong)' }}
+      aria-label="Inspector"
+    >
+      <header className="px-4 pt-3.5 pb-3 border-b" style={{ borderColor: 'var(--ws-hairline)' }}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.18em] mb-1" style={{ color: accent }}>
+              {kicker}
+            </div>
+            <h3 className="ws-display text-[17px] leading-tight capitalize" style={{ color: 'var(--ws-ink)' }}>
+              {title}
+            </h3>
+            {subtitle && (
+              <p className="text-[11.5px] mt-0.5 italic" style={{ color: 'var(--ws-ink-faint)' }}>
+                {subtitle}
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} aria-label="Close Inspector" className="p-1.5 rounded-md hover:bg-white/10 shrink-0" style={{ color: 'var(--ws-ink-faint)' }}>
+            <X size={15} />
           </button>
         </div>
+
+        {lede && (
+          <p className="text-[12px] leading-relaxed mt-2.5" style={{ color: 'var(--ws-ink-muted)' }}>
+            {lede}
+          </p>
+        )}
+      </header>
+
+      {/* Curiosity triad: always the same three moves, wherever you are. */}
+      <div className="grid grid-cols-3 gap-1 px-3 py-2.5 border-b" style={{ borderColor: 'var(--ws-hairline)' }}>
         <button
-          onClick={onClose}
-          className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-700"
-          aria-label="Close Inspector"
+          onClick={() => onPinEntity(selection)}
+          aria-pressed={isPinned}
+          className="ws-chip flex flex-col items-center gap-1 py-2 text-[11px]"
+          style={isPinned ? { color: 'var(--ws-culture)' } : { color: 'var(--ws-ink-muted)' }}
+          title="Keep this subject in view across deep time"
         >
-          <X size={16} />
+          <Pin size={14} />
+          {isPinned ? 'Following' : 'Follow'}
+        </button>
+        <button
+          onClick={() => onOpenWhyForNode(causalNodeId || `cause_${selection.type.toLowerCase()}_${selection.id}`)}
+          className="ws-chip flex flex-col items-center gap-1 py-2 text-[11px]"
+          style={{ color: 'var(--ws-deep-time)' }}
+          title="Trace the chain of causes that produced this"
+        >
+          <HelpCircle size={14} />
+          Why?
+        </button>
+        <button
+          onClick={() => onOpenWorldLab?.()}
+          className="ws-chip flex flex-col items-center gap-1 py-2 text-[11px]"
+          style={{ color: 'var(--ws-culture)' }}
+          title="Change something and watch the consequences"
+        >
+          <Sparkles size={14} />
+          What if?
         </button>
       </div>
 
-      {/* Body Content */}
-      <div className="p-4 overflow-y-auto space-y-4 text-xs font-sans">
-        {/* TILE SELECTION */}
-        {selection.type === 'TILE' && (() => {
-          const [tx, ty] = selection.id.split(',').map(Number);
-          const tile = grid[ty]?.[tx];
-          if (!tile) return <div>Tile not found</div>;
+      <div className="px-4 py-3 overflow-y-auto space-y-4">
+        {body}
 
-          return (
-            <div className="space-y-3">
-              <div>
-                <h3 className="text-base font-bold text-white font-serif">{tile.biome.replace('_', ' ')}</h3>
-                <p className="text-slate-400 font-mono text-[11px]">Coordinates: ({tile.x}, {tile.y}) | Plate #{tile.plateId}</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 bg-slate-800/50 p-2.5 rounded-lg border border-slate-700/50 font-mono">
-                <div>Elevation: <span className="text-white font-semibold">{Math.round(tile.elevation * 1000)}m</span></div>
-                <div>Temp: <span className="text-white font-semibold">{tile.currentTemp}°C</span></div>
-                <div>Rainfall: <span className="text-white font-semibold">{Math.round(tile.rainfall * 100)}%</span></div>
-                <div>Biomass: <span className="text-emerald-400 font-semibold">{tile.biomass}</span></div>
-                <div>Capacity: <span className="text-amber-400 font-semibold">{tile.carryingCapacity}</span></div>
-                <div>Pop Density: <span className="text-amber-400 font-semibold">{tile.populationDensity}</span></div>
-              </div>
-
-              {/* Ruins on this tile */}
-              {tile.ruins.length > 0 && (
-                <div className="space-y-1">
-                  <h4 className="font-semibold text-purple-300">Archaeological Ruins</h4>
-                  {tile.ruins.map(r => (
-                    <button
-                      key={r.id}
-                      onClick={() => onSelectEntity({ type: 'RUIN', id: r.id })}
-                      className="w-full text-left p-2 bg-purple-950/40 border border-purple-800/60 rounded-lg hover:bg-purple-900/40 flex items-center justify-between"
-                    >
-                      <div>
-                        <div className="font-medium text-purple-200">{r.originalName}</div>
-                        <div className="text-[10px] text-purple-400">Collapsed Year {r.collapsedYear}</div>
-                      </div>
-                      <ChevronRight size={14} className="text-purple-400" />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* SPECIES SELECTION */}
-        {selection.type === 'SPECIES' && (() => {
-          const s = species[selection.id];
-          if (!s) return <div>Species not found</div>;
-
-          return (
-            <div className="space-y-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">{s.iconSymbol}</span>
-                  <div>
-                    <h3 className="text-base font-bold text-white font-serif">{s.commonName}</h3>
-                    <p className="text-slate-400 italic text-[11px] font-mono">{s.scientificName}</p>
-                  </div>
-                </div>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
-                    {s.trophicLevel}
-                  </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-blue-300 border border-blue-800">
-                    {s.morphology.replace('_', ' ')}
-                  </span>
-                  {s.isSapient && (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-950 text-purple-300 border border-purple-800 font-bold">
-                      🧠 SAPIENT
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Curiosity Triad Action Buttons */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => onOpenWhyForNode(s.causalNodeId)}
-                  className="py-2 px-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-                >
-                  <Search size={13} />
-                  <span>WHY?</span>
-                </button>
-                {onOpenFieldGuide && (
-                  <button
-                    onClick={onOpenFieldGuide}
-                    className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <Dna size={13} />
-                    <span>3D Field Guide</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Genome & Traits */}
-              <div className="space-y-2">
-                <h4 className="font-semibold text-slate-300">Genome & Anatomy</h4>
-                <div className="grid grid-cols-2 gap-2 bg-slate-800/50 p-2.5 rounded-lg border border-slate-700/50 font-mono text-[11px]">
-                  <div>Size: <span className="text-white">{s.genome.bodySizeMeters}m</span></div>
-                  <div>Speed: <span className="text-white">{s.genome.speedKmh} km/h</span></div>
-                  <div>Lifespan: <span className="text-white">{s.genome.lifespanYears}y</span></div>
-                  <div>Cognition: <span className="text-purple-300 font-bold">{s.genome.cognition}/100</span></div>
-                  <div>Locomotion: <span className="text-white">{s.genome.locomotion}</span></div>
-                  <div>Sensory: <span className="text-white">{s.genome.sensoryModality}</span></div>
-                </div>
-              </div>
-
-              <div className="bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/40 flex justify-between">
-                <span className="text-slate-400">Total Population:</span>
-                <span className="font-mono text-emerald-400 font-bold">{s.totalPopulation.toLocaleString()}</span>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* SETTLEMENT SELECTION */}
-        {selection.type === 'SETTLEMENT' && (() => {
-          const sett = settlements[selection.id];
-          if (!sett) return <div>Settlement not found</div>;
-          const cult = cultures[sett.cultureId];
-          const pol = polities[sett.polityId];
-
-          return (
-            <div className="space-y-3">
-              <div>
-                <h3 className="text-base font-bold text-white font-serif">{sett.name}</h3>
-                <p className="text-amber-400 font-mono text-[11px]">Tier: {sett.tier} | Founded Year {sett.foundedYear}</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => onOpenWhyForNode(sett.causalNodeId)}
-                  className="py-2 px-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-                >
-                  <Search size={13} />
-                  <span>WHY HERE?</span>
-                </button>
-                {onOpenCivilizationDossier && (
-                  <button
-                    onClick={onOpenCivilizationDossier}
-                    className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <Landmark size={13} />
-                    <span>3D Dossier</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 bg-slate-800/50 p-2.5 rounded-lg border border-slate-700/50 font-mono">
-                <div>Population: <span className="text-white font-bold">{sett.population.toLocaleString()}</span></div>
-                <div>Food Reserve: <span className="text-emerald-400">{sett.foodSupplyDays} days</span></div>
-                {cult && <div className="col-span-2">Culture: <span className="text-amber-300 font-sans">{cult.name}</span></div>}
-                {pol && <div className="col-span-2">Polity: <span className="text-sky-300 font-sans">{pol.name}</span></div>}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* RUIN SELECTION */}
-        {selection.type === 'RUIN' && (() => {
-          const r = ruins[selection.id];
-          if (!r) return <div>Ruin not found</div>;
-
-          return (
-            <div className="space-y-3">
-              <div>
-                <h3 className="text-base font-bold text-purple-300 font-serif">Ruins of {r.originalName}</h3>
-                <p className="text-slate-400 font-mono text-[11px]">Active: Year {r.foundedYear} — {r.collapsedYear}</p>
-              </div>
-
-              <button
-                onClick={() => onOpenWhyForNode(r.id)}
-                className="w-full py-2 px-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 shadow"
-              >
-                <Search size={13} />
-                <span>WHY DID THIS COLLAPSE?</span>
-              </button>
-
-              <div className="bg-red-950/30 p-2.5 rounded-lg border border-red-800/40 text-[11px]">
-                <span className="font-semibold text-red-300">Collapse Cause:</span>
-                <p className="text-slate-300 mt-0.5">{r.collapseCause}</p>
-              </div>
-            </div>
-          );
-        })()}
+        {selection.type === 'SPECIES' && onOpenFieldGuide && (
+          <button onClick={onOpenFieldGuide} className="ws-chip w-full flex items-center justify-center gap-2 py-2 text-[12px]" style={{ color: 'var(--ws-life)' }}>
+            <Dna size={14} />
+            Open in Field Guide
+          </button>
+        )}
+        {selection.type === 'SETTLEMENT' && onOpenCivilizationDossier && (
+          <button onClick={onOpenCivilizationDossier} className="ws-chip w-full flex items-center justify-center gap-2 py-2 text-[12px]" style={{ color: 'var(--ws-culture)' }}>
+            <Landmark size={14} />
+            Open civilisation dossier
+          </button>
+        )}
       </div>
-    </div>
+    </aside>
   );
 };

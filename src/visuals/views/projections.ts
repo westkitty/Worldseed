@@ -10,7 +10,37 @@ export interface Camera3D {
   rotY: number; // Yaw / Orbit in radians
 }
 
+export interface ViewFrame {
+  originX: number;
+  originY: number;
+  tileSize: number;
+}
+
 export class WorldProjectionEngine {
+  /**
+   * Single source of truth for how a flat world maps onto the canvas. The renderer, the
+   * hit test, the minimap and the camera-centring helper all use this, so a click always
+   * lands on the tile the user actually sees.
+   */
+  public static frame(
+    canvasWidth: number,
+    canvasHeight: number,
+    gridWidth: number,
+    gridHeight: number,
+    camera: Camera3D
+  ): ViewFrame {
+    // Leave room for the chrome that floats over the world (time deck at the bottom, control
+    // clusters at the top) and for the Square World frame's bevel, so the map is never
+    // cropped by the viewport edges at the default zoom.
+    const fit = Math.min((canvasWidth * 0.86) / gridWidth, (canvasHeight * 0.74) / gridHeight);
+    const tileSize = fit * camera.zoom;
+    return {
+      tileSize,
+      originX: (canvasWidth - gridWidth * tileSize) / 2 + camera.x,
+      originY: (canvasHeight - gridHeight * tileSize) / 2 + camera.y
+    };
+  }
+
   // Convert 2D screen click (cx, cy) to grid coordinate (gx, gy) for any projection mode
   public static screenToGrid(
     screenX: number,
@@ -26,9 +56,7 @@ export class WorldProjectionEngine {
     const centerCanvasY = canvasHeight / 2 + camera.y;
 
     if (viewMode === 'FLAT_ATLAS' || viewMode === 'SQUARE_TILE') {
-      const tileSize = (Math.min(canvasWidth, canvasHeight) / gridHeight) * camera.zoom;
-      const originX = centerCanvasX - (gridWidth * tileSize) / 2;
-      const originY = centerCanvasY - (gridHeight * tileSize) / 2;
+      const { tileSize, originX, originY } = this.frame(canvasWidth, canvasHeight, gridWidth, gridHeight, camera);
 
       const gx = Math.floor((screenX - originX) / tileSize);
       const gy = Math.floor((screenY - originY) / tileSize);

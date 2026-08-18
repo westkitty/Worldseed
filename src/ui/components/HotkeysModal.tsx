@@ -1,56 +1,100 @@
-// Keyboard Shortcuts & Accessibility Guide Modal
+// Keyboard reference — kept honest with the actual key handlers in App and WorldCanvas.
 
 import React from 'react';
-import { X, Keyboard } from 'lucide-react';
+import { X } from 'lucide-react';
 
 interface HotkeysModalProps {
   onClose: () => void;
 }
 
-export const HotkeysModal: React.FC<HotkeysModalProps> = ({ onClose }) => {
-  const hotkeys = [
-    { key: 'Space', desc: 'Toggle Pause / Resume Simulation' },
-    { key: '1, 2, 3, 4, 5', desc: 'Set Simulation Speed (1x, 5x, 20x, 100x, 1000x)' },
-    { key: 'WASD / Arrows', desc: 'Pan flat maps or orbit 3D world views' },
-    { key: '+ / -', desc: 'Zoom camera in / out' },
-    { key: 'Home', desc: 'Reset flat-map camera to world overview' },
-    { key: 'V', desc: 'Cycle world presentation mode' },
-    { key: 'T', desc: 'Open Phylogenetic Tree of Life' },
-    { key: 'C', desc: 'Open Historical Chronicle of Eras' },
-    { key: 'Cmd/Ctrl + K', desc: 'Open command palette for World Lab, Discoveries, search, and navigation' },
-    { key: 'Tab', desc: 'Toggle minimal Immersion Mode' },
-    { key: 'Esc', desc: 'Close open modal or deselect current entity' },
-    { key: 'Click + Drag', desc: 'Pan flat maps or orbit 3D world views' },
-    { key: 'Mouse Wheel', desc: 'Zoom toward / away from the world' }
-  ];
+const GROUPS: Array<{ title: string; keys: Array<[string, string]> }> = [
+  {
+    title: 'Time',
+    keys: [
+      ['Space', 'Pause or resume time'],
+      ['1 – 5', 'Speed: 1×, 5×, 20×, 100×, 1000×']
+    ]
+  },
+  {
+    title: 'Camera',
+    keys: [
+      ['W A S D', 'Move or orbit the world'],
+      ['Arrows', 'Move or orbit the world'],
+      ['Shift + move', 'Move faster'],
+      ['+ / −', 'Zoom in and out'],
+      ['Home', 'Reset framing'],
+      ['Drag', 'Turn or pan'],
+      ['Scroll / pinch', 'Zoom toward the pointer']
+    ]
+  },
+  {
+    title: 'Looking around',
+    keys: [
+      ['V', 'Cycle presentation mode'],
+      ['Tab', 'Immersion Mode'],
+      ['Esc', 'Close panel or dialog'],
+      ['⌘K / Ctrl+K', 'Command palette']
+    ]
+  },
+  {
+    title: 'Instruments',
+    keys: [
+      ['T', 'Tree of Life'],
+      ['C', 'Chronicle'],
+      ['L', 'World Lab (What if?)'],
+      ['G', 'Discoveries'],
+      ['?', 'This reference']
+    ]
+  }
+];
 
-  return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in select-none">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl overflow-hidden text-slate-200">
-        <div className="px-6 py-4 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-sky-600/30 border border-sky-500/50 rounded-xl text-sky-400">
-              <Keyboard size={20} />
-            </div>
-            <div>
-              <span className="text-[10px] font-mono uppercase tracking-widest text-sky-400 font-bold">Controls & Accessibility</span>
-              <h2 className="text-lg font-bold text-white font-serif tracking-tight">Keyboard Shortcuts & Navigation</h2>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800" aria-label="Close controls">
-            <X size={20} />
-          </button>
-        </div>
+export const HotkeysModal: React.FC<HotkeysModalProps> = ({ onClose }) => (
+  <div
+    className="fixed inset-0 flex items-center justify-center p-4 z-50 animate-fade-in"
+    style={{ background: 'rgba(3, 5, 9, 0.78)', backdropFilter: 'blur(8px)' }}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Keyboard shortcuts"
+    onClick={onClose}
+  >
+    <div
+      className="ws-panel w-full max-w-[560px] max-h-[82vh] overflow-hidden flex flex-col"
+      style={{ background: 'var(--ws-surface-strong)' }}
+      onClick={e => e.stopPropagation()}
+    >
+      <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--ws-hairline)' }}>
+        <h2 className="ws-display text-[14px]" style={{ letterSpacing: '0.14em' }}>
+          SHORTCUTS
+        </h2>
+        <button onClick={onClose} aria-label="Close Shortcuts" className="p-1.5 rounded-md hover:bg-white/10" style={{ color: 'var(--ws-ink-faint)' }}>
+          <X size={16} />
+        </button>
+      </div>
 
-        <div className="p-6 overflow-y-auto space-y-2.5 text-xs font-sans">
-          {hotkeys.map((hk, i) => (
-            <div key={i} className="p-3 bg-slate-800/60 border border-slate-700/60 rounded-xl flex items-center justify-between gap-4">
-              <span className="text-slate-300">{hk.desc}</span>
-              <kbd className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded text-sky-400 font-mono font-bold shadow-inner whitespace-nowrap">{hk.key}</kbd>
-            </div>
-          ))}
-        </div>
+      <div className="p-5 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+        {GROUPS.map(group => (
+          <section key={group.title}>
+            <h3 className="text-[10px] uppercase tracking-[0.16em] mb-2" style={{ color: 'var(--ws-ink-faint)' }}>
+              {group.title}
+            </h3>
+            <dl className="space-y-1.5">
+              {group.keys.map(([key, description]) => (
+                <div key={key} className="flex items-baseline justify-between gap-3">
+                  <dd className="text-[12px] order-2 text-right" style={{ color: 'var(--ws-ink-muted)' }}>
+                    {description}
+                  </dd>
+                  <dt
+                    className="ws-numeric text-[11px] px-1.5 py-0.5 rounded order-1 shrink-0"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--ws-ink)' }}
+                  >
+                    {key}
+                  </dt>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
       </div>
     </div>
-  );
-};
+  </div>
+);
